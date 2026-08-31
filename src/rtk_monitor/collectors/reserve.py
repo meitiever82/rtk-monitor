@@ -20,7 +20,11 @@ class LocalReserver:
                          writer: asyncio.StreamWriter) -> None:
         self._writers.add(writer)
         try:
-            await reader.read()          # block until the client disconnects
+            # Clients aren't expected to send anything -- discard in bounded
+            # chunks (rather than a single unbounded read()) until EOF so a
+            # misbehaving client can't buffer unboundedly in memory.
+            while await reader.read(4096):
+                pass
         finally:
             self._writers.discard(writer)
             writer.close()
