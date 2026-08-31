@@ -56,6 +56,62 @@ async def test_listen_mode_accepts_peer():
     assert got == [b"$GPCHC,...\r\n"]
 
 
+async def test_idle_timeout_treated_as_disconnect():
+    """A peer that stops sending (routine on flaky 5G) must not hang the pump
+    forever -- it should be treated as a disconnect within idle_timeout."""
+    async def handler(reader, writer):
+        writer.write(b"hi")
+        await writer.drain()
+        await asyncio.sleep(10)  # never sends again, never closes
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    got: list[bytes] = []
+    events: list[tuple[str, str]] = []
+    c = TcpCollector("corr", "127.0.0.1", port,
+                     on_data=lambda d, t: got.append(d),
+                     on_event=lambda n, s, det: events.append((n, s)),
+                     initial_backoff=0.01, max_backoff=0.05,
+                     idle_timeout=0.05)
+    task = asyncio.create_task(c.run())
+    for _ in range(200):
+        if ("corr", "disconnected") in events:
+            break
+        await asyncio.sleep(0.02)
+    task.cancel()
+    server.close()
+    assert b"hi" in got
+    assert ("corr", "disconnected") in events
+
+
+async def test_disconnect_event_only_on_transition():
+    """A dead route must not spam a "disconnected" event on every failed
+    reconnect attempt -- only on the transition into the disconnected state."""
+    port_box: list[int] = []
+    server, _remaining = await _serve_once(port_box, b"x", times=1)
+    port = port_box[0]
+    events: list[tuple[str, str]] = []
+    c = TcpCollector("corr", "127.0.0.1", port,
+                     on_data=lambda d, t: None,
+                     on_event=lambda n, s, det: events.append((n, s)),
+                     initial_backoff=0.01, max_backoff=0.01)
+    task = asyncio.create_task(c.run())
+    for _ in range(200):
+        if ("corr", "disconnected") in events:
+            break
+        await asyncio.sleep(0.01)
+    assert ("corr", "disconnected") in events  # the one legitimate transition
+    server.close()
+    await server.wait_closed()
+    events.clear()
+    # Now every reconnect attempt fails outright (connection refused); since
+    # we never leave the disconnected state, no further events should fire.
+    await asyncio.sleep(0.3)
+    task.cancel()
+    disconnect_count = events.count(("corr", "disconnected"))
+    assert disconnect_count == 0, f"expected no repeat disconnect events on dead route, got {disconnect_count}"
+
+
 async def test_listen_mode_closes_on_cancel():
     """Verify that cancelling listen mode closes accepted connections."""
     c = TcpCollector("sol", "127.0.0.1", 0, on_data=lambda d, t: None,
@@ -80,6 +136,6 @@ async def test_listen_mode_closes_on_cancel():
             closed_at_iteration = i
             break
     # After writers are closed, the client should get EOF when reading
-    if closed_at_iteration is not None:
-        data = await asyncio.wait_for(reader.read(1024), timeout=0.5)
-        assert data == b"", f"Expected EOF but got {repr(data)}"
+    assert closed_at_iteration is not None, "Writers were never closed after cancel"
+    data = await asyncio.wait_for(reader.read(1024), timeout=0.5)
+    assert data == b"", f"Expected EOF but got {repr(data)}"

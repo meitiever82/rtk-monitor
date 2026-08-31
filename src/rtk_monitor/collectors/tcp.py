@@ -16,7 +16,8 @@ OnEvent = Callable[[str, str, str], None]
 class TcpCollector:
     def __init__(self, name: str, host: str, port: int,
                  on_data: OnData, on_event: OnEvent, listen: bool = False,
-                 initial_backoff: float = 1.0, max_backoff: float = 30.0) -> None:
+                 initial_backoff: float = 1.0, max_backoff: float = 30.0,
+                 idle_timeout: float = 30.0) -> None:
         self._name = name
         self._host = host
         self._port = port
@@ -25,8 +26,14 @@ class TcpCollector:
         self._listen = listen
         self._initial = initial_backoff
         self._max = max_backoff
+        self._idle_timeout = idle_timeout
         self.bound_port: int | None = None
         self._active_writers: set[asyncio.StreamWriter] = set()
+        self._last_state: str | None = None
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     async def run(self) -> None:
         if self._listen:
@@ -36,8 +43,14 @@ class TcpCollector:
 
     async def _pump(self, reader: asyncio.StreamReader) -> None:
         self._on_event(self._name, "connected", "")
+        self._last_state = "connected"
         while True:
-            data = await reader.read(4096)
+            try:
+                data = await asyncio.wait_for(reader.read(4096), timeout=self._idle_timeout)
+            except asyncio.TimeoutError:
+                # Peer vanished without RST (routine on flaky links) -- treat
+                # the silence as a disconnect so the reconnect path runs.
+                break
             if not data:
                 break
             self._on_data(data, time.time())
@@ -55,7 +68,9 @@ class TcpCollector:
             finally:
                 if writer is not None:
                     writer.close()
-            self._on_event(self._name, "disconnected", f"retry in {backoff:.0f}s")
+            if self._last_state != "disconnected":
+                self._on_event(self._name, "disconnected", f"retry in {backoff:.0f}s")
+                self._last_state = "disconnected"
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, self._max)
 

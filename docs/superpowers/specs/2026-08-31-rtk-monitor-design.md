@@ -94,8 +94,9 @@ diagnosis 对构造的指标序列测试；前端对录制的 WebSocket 消息�
 | 3 纯卫导解 | 610 TCP/UDP Client7（勾"卫导数据"，GPCHC/HCINSPVATZCB） | TCP server（收 Client7 回传）或 TCP client，依 610 配置定 | 裸流 + 解析入 SQLite |
 | 4 CAN 融合输出 | SocketCAN（can0） | python-can | candump 兼容文本（与现有 record_can.sh 一致）+ 解析入 SQLite |
 
-sidecar 索引为 JSON Lines，每条消息一行：`{host_time, msg_type, offset, len}`，
-用于主机时间与流内 GPS 时间的对齐及按时间段快速定位字节区间。
+sidecar 索引为 JSON Lines，每条消息一行：`{t, type, off, len}`（分别对应主机时间、
+消息类型、裸流内字节偏移、消息长度），用于主机时间与流内 GPS 时间的对齐及按时间段
+快速定位字节区间。
 
 ### 3.2 落盘与清理
 
