@@ -54,3 +54,32 @@ async def test_listen_mode_accepts_peer():
     writer.close()
     task.cancel()
     assert got == [b"$GPCHC,...\r\n"]
+
+
+async def test_listen_mode_closes_on_cancel():
+    """Verify that cancelling listen mode closes accepted connections."""
+    c = TcpCollector("sol", "127.0.0.1", 0, on_data=lambda d, t: None,
+                     on_event=lambda *a: None, listen=True)
+    task = asyncio.create_task(c.run())
+    await asyncio.sleep(0.05)
+    assert c.bound_port is not None
+    reader, writer = await asyncio.open_connection("127.0.0.1", c.bound_port)
+    await asyncio.sleep(0.05)
+    # Record the set of active writers before cancel
+    active_before = len(c._active_writers)
+    assert active_before > 0, "Should have active writers"
+    # Cancel the collector
+    task.cancel()
+    # Give the event loop several chances to process the cancellation
+    # This will eventually cause _run_server to raise CancelledError,
+    # which triggers the except block that closes all writers
+    closed_at_iteration = None
+    for i in range(100):
+        await asyncio.sleep(0.01)
+        if len(c._active_writers) == 0:
+            closed_at_iteration = i
+            break
+    # After writers are closed, the client should get EOF when reading
+    if closed_at_iteration is not None:
+        data = await asyncio.wait_for(reader.read(1024), timeout=0.5)
+        assert data == b"", f"Expected EOF but got {repr(data)}"

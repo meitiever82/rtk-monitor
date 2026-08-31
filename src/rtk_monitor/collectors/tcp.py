@@ -26,6 +26,7 @@ class TcpCollector:
         self._initial = initial_backoff
         self._max = max_backoff
         self.bound_port: int | None = None
+        self._active_writers: set[asyncio.StreamWriter] = set()
 
     async def run(self) -> None:
         if self._listen:
@@ -60,13 +61,24 @@ class TcpCollector:
 
     async def _run_server(self) -> None:
         async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+            self._active_writers.add(writer)
             try:
-                await self._pump(reader)
+                try:
+                    await self._pump(reader)
+                except OSError:
+                    pass
             finally:
                 self._on_event(self._name, "disconnected", "peer closed")
                 writer.close()
+                self._active_writers.discard(writer)
 
         server = await asyncio.start_server(handler, self._host, self._port)
         self.bound_port = server.sockets[0].getsockname()[1]
-        async with server:
-            await server.serve_forever()
+        try:
+            async with server:
+                await server.serve_forever()
+        except asyncio.CancelledError:
+            # Close all accepted connections before exiting
+            for w in list(self._active_writers):
+                w.close()
+            raise
