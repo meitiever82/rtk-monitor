@@ -68,3 +68,9 @@ vcpkg_installed/
 Testing/
 .cache/
 .claude/worktrees/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
