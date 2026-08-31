@@ -60,7 +60,7 @@ class App:
             self._bus = can.Bus(interface="socketcan", channel=channel)
             log_name = channel
         self._can_log = CandumpWriter(cfg.data_root, log_name)
-        self._can_collector = CanCollector(self._bus, self._on_can)
+        self._can_collector = CanCollector(self._bus, self._on_can, self._on_event)
 
     # --- stream callbacks: log first, then fan out -------------------------
     def _on_corr(self, data: bytes, t: float) -> None:

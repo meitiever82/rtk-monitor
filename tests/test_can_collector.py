@@ -22,6 +22,39 @@ async def test_collector_receives_virtual_bus_frames():
         assert got == [(0x320, b"\x01\x02")]
 
 
+async def test_link_watchdog_fires_disconnected_then_connected():
+    """No frames for data_timeout -> a "disconnected" can_link event (once
+    per outage); the first frame after that -> a "connected" event."""
+    with can.Bus(interface="virtual", channel="t2") as tx, \
+         can.Bus(interface="virtual", channel="t2") as rx:
+        events: list[tuple[str, str, str]] = []
+        c = CanCollector(rx, on_frame=lambda i, d, t: None,
+                          on_event=lambda n, s, d: events.append((n, s, d)),
+                          data_timeout=0.05)
+        task = asyncio.create_task(c.run())
+        for _ in range(200):
+            if ("can_link", "disconnected") in [(n, s) for n, s, _ in events]:
+                break
+            await asyncio.sleep(0.01)
+        states = [(n, s) for n, s, _ in events]
+        assert ("can_link", "disconnected") in states
+        # No frame yet -> only one disconnected event fired, not a repeat per poll.
+        assert states.count(("can_link", "disconnected")) == 1
+
+        tx.send(can.Message(arbitration_id=0x321, data=b"\x00", is_extended_id=False))
+        for _ in range(200):
+            if ("can_link", "connected") in [(n, s) for n, s, _ in events]:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        states = [(n, s) for n, s, _ in events]
+        assert ("can_link", "connected") in states
+
+
 def test_candump_writer_format(tmp_path):
     w = CandumpWriter(tmp_path, "can0", clock=lambda: 1756699200.0)
     w.append(0x320, bytes.fromhex("44093c1cc30600aa"), t=1756699200.123456)
