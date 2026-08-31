@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 
+_MAX_WRITE_BUFFER = 4 * 1024 * 1024  # force-close clients that stop reading
+
 
 class LocalReserver:
     def __init__(self) -> None:
@@ -27,6 +29,10 @@ class LocalReserver:
         for w in list(self._writers):
             if w.is_closing():
                 self._writers.discard(w)
+                continue
+            if w.transport.get_write_buffer_size() > _MAX_WRITE_BUFFER:
+                self._writers.discard(w)
+                w.close()
                 continue
             w.write(data)
 
