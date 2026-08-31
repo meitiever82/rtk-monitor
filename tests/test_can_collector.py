@@ -26,5 +26,9 @@ def test_candump_writer_format(tmp_path):
     w = CandumpWriter(tmp_path, "can0", clock=lambda: 1756699200.0)
     w.append(0x320, bytes.fromhex("44093c1cc30600aa"), t=1756699200.123456)
     w.close()
-    line = next(next(tmp_path.iterdir()).glob("can0_*.log")).read_text().strip()
+    day = next(tmp_path.iterdir())
+    line = next(day.glob("can0_*.log")).read_text().strip()
     assert line == "(1756699200.123456) can0 320#44093C1CC30600AA"
+    # No per-frame JSONL sidecar: candump lines already carry timestamps, so
+    # the index would be pure waste at CAN frame rates (~700/s).
+    assert list(day.glob("*.idx.jsonl")) == []

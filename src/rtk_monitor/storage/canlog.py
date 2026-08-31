@@ -10,7 +10,10 @@ from rtk_monitor.storage.rawlog import RawLogWriter
 class CandumpWriter:
     def __init__(self, root: Path, channel: str, clock=time.time) -> None:
         self._channel = channel
-        self._raw = RawLogWriter(root, channel, ext="log", clock=clock)
+        # At ~700 frames/s a per-frame JSONL sidecar is pure waste (candump
+        # lines already carry timestamps): skip the index and batch flushes.
+        self._raw = RawLogWriter(root, channel, ext="log", clock=clock,
+                                  index=False, flush_every=50)
 
     def append(self, can_id: int, data: bytes, t: float) -> None:
         line = f"({t:.6f}) {self._channel} {can_id:03X}#{data.hex().upper()}\n"
