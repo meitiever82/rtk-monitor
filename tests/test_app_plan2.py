@@ -168,6 +168,28 @@ def test_stale_can_epoch_gated_from_fallbacks(tmp_path):
     app.events.close()
 
 
+def test_diagnosis_transition_broadcasts_top_level_t(tmp_path):
+    """The realtime event broadcast (main.py _on_diagnosis_transition) must
+    carry a top-level "t" alongside the nested event.t, so realtime and
+    replay event messages are field-identical (replay.replay_messages emits
+    {"type": "event", "t": ..., "action": ..., "event": {...}})."""
+    from rtk_monitor.diagnosis.rules import Verdict
+
+    app = build_app(_minimal_cfg(tmp_path))
+    q = app.broadcaster.subscribe()
+    v = Verdict("serious", "corr_outage", "差分中断")
+    app._on_diagnosis_transition("open", v, 123.5)
+
+    msg = q.get_nowait()
+    assert msg["type"] == "event"
+    assert msg["t"] == 123.5
+    assert msg["action"] == "open"
+    assert msg["event"]["t"] == 123.5
+    assert msg["event"]["code"] == "corr_outage"
+    app._bus.shutdown()
+    app.events.close()
+
+
 def test_div_since_cleared_when_inputs_vanish(tmp_path):
     """Item 7: if divergence was held and the CAN/sol pairing drops out (no
     fresh inputs to compare), the stale _div_since timer must not survive to

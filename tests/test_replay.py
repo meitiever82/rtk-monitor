@@ -240,6 +240,74 @@ async def test_replay_end_message(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_replay_close_message_for_event_opened_before_window(tmp_path):
+    """An event opened before t0 but closed inside [t0, t1] must still emit
+    its close message -- querying events with since=t0 at the SQL level would
+    exclude the row entirely (its t < t0), silently dropping the close."""
+    ep = EpochStore(tmp_path / "e.db")
+    ev = EventStore(tmp_path / "e.db")
+    rid = ev.record(90.0, "diagnosis", "open", "差分中断", level="serious", code="corr_outage")
+    ev.close_event(rid, 100.5)
+
+    async def nosleep(_):
+        pass
+
+    msgs = await _collect(replay_messages(ep, ev, 100.0, 102.0, sleep=nosleep))
+    events = [m for m in msgs if m["type"] == "event"]
+
+    assert len(events) == 1
+    assert events[0]["action"] == "close"
+    assert events[0]["t"] == 100.5
+    assert events[0]["event"]["code"] == "corr_outage"
+
+
+@pytest.mark.asyncio
+async def test_replay_sol_key_set_matches_realtime_contract(tmp_path):
+    """status.sol must be exactly the 11-key set the realtime WS contract
+    uses for sol (main.py's _diagnosis_tick sol_dict) -- not a full Epoch
+    asdict, which would leak src/heading/speed/sats_json."""
+    ep = EpochStore(tmp_path / "e.db")
+    ev = EventStore(tmp_path / "e.db")
+    ep.add(Epoch(t=100.5, src="rtkrcv", q=1, sats=38, age=1.2, ratio=20.0,
+                 lat=44.6, lon=90.3, alt=600.0, sdn=0.01, sde=0.02, sdu=0.03,
+                 heading=170.0, speed=5.0))
+
+    async def nosleep(_):
+        pass
+
+    msgs = await _collect(replay_messages(ep, ev, 100.0, 101.0, sleep=nosleep))
+    st = [m for m in msgs if m["type"] == "status"][-1]
+
+    assert st["sol"] is not None
+    assert set(st["sol"].keys()) == {
+        "t", "q", "sats", "age", "ratio", "lat", "lon", "alt", "sdn", "sde", "sdu"}
+    assert st["sol"]["q"] == 1 and st["sol"]["sats"] == 38
+
+
+@pytest.mark.asyncio
+async def test_replay_status_carries_forward_epoch_before_t0(tmp_path):
+    """A single can epoch written before t0 must still be visible in the
+    first status snapshot (carry-forward), but must NOT produce a position
+    message since it falls outside [t0, t1]."""
+    ep = EpochStore(tmp_path / "e.db")
+    ev = EventStore(tmp_path / "e.db")
+    ep.add(Epoch(t=90.0, src="can", q=4, lat=44.5, lon=90.2, heading=170.0, speed=5.0))
+
+    async def nosleep(_):
+        pass
+
+    msgs = await _collect(replay_messages(ep, ev, 100.0, 101.0, sleep=nosleep))
+
+    positions = [m for m in msgs if m["type"] == "position"]
+    assert len(positions) == 0
+
+    status_100 = [m for m in msgs if m["type"] == "status" and m["t"] == 100.0][0]
+    assert status_100["can"] is not None
+    assert status_100["can"]["t"] == 90.0
+    assert status_100["can"]["lat"] == 44.5
+
+
+@pytest.mark.asyncio
 async def test_replay_status_uses_latest_snapshot(tmp_path):
     """Status messages use the latest epoch for each source ≤ the second."""
     ep = EpochStore(tmp_path / "e.db")

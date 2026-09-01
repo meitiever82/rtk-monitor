@@ -302,6 +302,7 @@ class App:
         try:
             self.broadcaster.publish({
                 "type": "event",
+                "t": t,
                 "action": kind,
                 "event": {
                     "t": t,
