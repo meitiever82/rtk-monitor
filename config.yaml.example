@@ -31,3 +31,9 @@ publish:          # UDP JSON Lines output (GLIM phase-2 interface)
   enabled: false
   host: 127.0.0.1
   port: 15030
+
+web:              # FastAPI/WebSocket UI service
+  port: 8080
+  tiles_path: ""  # MBTiles file for offline imagery; empty = grid fallback
+
+db_retention_days: 30   # prune epochs/base_station/closed events older than this

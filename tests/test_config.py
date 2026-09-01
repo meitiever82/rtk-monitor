@@ -55,3 +55,34 @@ def test_plan2_sections_explicit():
     cfg = load_config(EXAMPLE)
     assert cfg.rtkrcv.sol_port == 15020          # example carries the sections
     assert cfg.publish.host == "127.0.0.1"
+
+def test_web_and_retention_defaults(tmp_path):
+    # A Plan-3a-era config with no web section or db_retention_days must still load with defaults.
+    p = tmp_path / "old.yaml"
+    p.write_text(EXAMPLE.read_text())  # example will gain the sections; strip them
+    lines = p.read_text().splitlines()
+    # Strip Plan 3a sections by skipping lines that start with their section names
+    # or belong to them (indented children), and skip db_retention_days
+    in_web_section = False
+    text_lines = []
+    for line in lines:
+        if line.startswith("web:"):
+            in_web_section = True
+        elif line.startswith("db_retention_days"):
+            # Skip db_retention_days line entirely
+            pass
+        elif line and not line[0].isspace():
+            # Top-level key (not indented) - exit web section
+            in_web_section = False
+            text_lines.append(line)
+        elif not in_web_section:
+            text_lines.append(line)
+    text = "\n".join(text_lines)
+    p.write_text(text)
+    cfg = load_config(p)
+    assert cfg.web.port == 8080 and cfg.web.tiles_path == ""
+    assert cfg.db_retention_days == 30
+
+def test_web_explicit():
+    cfg = load_config(EXAMPLE)
+    assert cfg.web.port == 8080          # example carries the section

@@ -46,6 +46,12 @@ class PublishCfg:
 
 
 @dataclass(frozen=True)
+class WebCfg:
+    port: int = 8080
+    tiles_path: str = ""
+
+
+@dataclass(frozen=True)
 class Config:
     data_root: Path
     db_path: Path
@@ -60,6 +66,8 @@ class Config:
     rtkrcv: RtkrcvCfg
     diagnosis: DiagnosisCfg
     publish: PublishCfg
+    web: WebCfg
+    db_retention_days: int
 
 
 def _stream(d: dict) -> StreamCfg:
@@ -71,6 +79,7 @@ def load_config(path: str | Path) -> Config:
     r = raw.get("rtkrcv") or {}
     d = raw.get("diagnosis") or {}
     p = raw.get("publish") or {}
+    w = raw.get("web") or {}
     return Config(
         data_root=Path(raw["data_root"]),
         db_path=Path(raw["db_path"]),
@@ -90,4 +99,7 @@ def load_config(path: str | Path) -> Config:
         publish=PublishCfg(enabled=bool(p.get("enabled", False)),
                            host=str(p.get("host", "127.0.0.1")),
                            port=int(p.get("port", 15030))),
+        web=WebCfg(port=int(w.get("port", 8080)),
+                   tiles_path=str(w.get("tiles_path", ""))),
+        db_retention_days=int(raw.get("db_retention_days", 30)),
     )
