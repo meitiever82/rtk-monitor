@@ -9,10 +9,19 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from pathlib import Path
 from typing import Callable
 
 _logger = logging.getLogger(__name__)
+
+# Crash-loop backoff: a process that dies almost immediately (bad binary,
+# misconfigured conf) would otherwise restart at a fixed cadence forever,
+# generating tens of thousands of connected/disconnected rows a day. If a
+# life is shorter than this, double the restart delay (capped); a life at
+# least this long resets the delay back to the configured base.
+_CRASH_LOOP_LIFE_S = 30.0
+_MAX_RESTART_DELAY_S = 60.0
 
 
 def _signal_group(proc, sig):
@@ -36,6 +45,7 @@ pos1-posmode =kinematic
 pos1-navsys =63
 pos1-elmask =10
 pos2-armode =continuous
+ant2-postype =rtcm
 out-solformat =llh
 out-outhead =off
 out-timesys =gpst
@@ -56,6 +66,8 @@ class RtkrcvManager:
         self._extra = extra_args
         self._delay = restart_delay
         self._on_event = on_event
+        self.current_delay = restart_delay
+        self._last_state: str | None = None
 
     def write_conf(self) -> Path:
         self._run_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +82,7 @@ class RtkrcvManager:
         env = dict(os.environ, RTKRCV_SOL_PORT=str(self._sol_port))
         while True:
             proc = None
+            started = time.monotonic()
             try:
                 # extra_args precede the fixed flags: lets tests spawn
                 # "python fake_rtkrcv.py ..." (Task 13); empty for the real binary
@@ -79,11 +92,10 @@ class RtkrcvManager:
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                     start_new_session=True)
-                if self._on_event:
-                    self._on_event("rtkrcv", "connected", f"pid {proc.pid}")
+                self._emit("connected", f"pid {proc.pid}")
                 rc = await proc.wait()
-                if self._on_event:
-                    self._on_event("rtkrcv", "disconnected", f"exit code {rc}")
+                self._emit("disconnected", f"exit code {rc}")
+                self._update_delay(time.monotonic() - started)
             except asyncio.CancelledError:
                 if proc is not None and proc.returncode is None:
                     _signal_group(proc, signal.SIGTERM)
@@ -95,6 +107,22 @@ class RtkrcvManager:
                 raise
             except Exception:
                 _logger.exception("rtkrcv spawn failed")
-                if self._on_event:
-                    self._on_event("rtkrcv", "disconnected", "spawn failed")
-            await asyncio.sleep(self._delay)
+                self._emit("disconnected", "spawn failed")
+                self._update_delay(time.monotonic() - started)
+            await asyncio.sleep(self.current_delay)
+
+    def _emit(self, state: str, detail: str) -> None:
+        # Dedup on transition only (like TcpCollector): a process that keeps
+        # failing to spawn would otherwise emit "disconnected" every restart
+        # cycle forever with no intervening "connected".
+        if self._last_state == state:
+            return
+        self._last_state = state
+        if self._on_event:
+            self._on_event("rtkrcv", state, detail)
+
+    def _update_delay(self, life_s: float) -> None:
+        if life_s < _CRASH_LOOP_LIFE_S:
+            self.current_delay = min(self.current_delay * 2, _MAX_RESTART_DELAY_S)
+        else:
+            self.current_delay = self._delay

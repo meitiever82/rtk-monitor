@@ -14,3 +14,7 @@
       （outstat 相关键），接通后把 stat 流喂给 `parse_sat_line`/`SlipWindow`——
       当前 App 的 `sats`/slip 输入为空，规则 4/6 不触发，属预期降级
 - [ ] 固定率合理性：开阔地静止 5 分钟，Q=1 占比 > 90%
+- [ ] 基站坐标来源核对：conf 已加 `ant2-postype =rtcm`（从 RTCM 1005/1006 取基站坐标）；
+      rtkrcv console status 中确认基站坐标确实来自 RTCM（而非本地静态配置）
+- [ ] 48 小时 soak 后核对数据库体积：rtkrcv epoch 写入已按 1Hz 抽稀（与 gpchc/can 一致）；
+      长期留存策略见 Plan 3
