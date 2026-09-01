@@ -27,3 +27,48 @@ def test_report_empty_range(tmp_path):
     ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
     r = compute_report(ep, ev, 0.0, 100.0)
     assert r["fix_ratio"] is None and r["events"] == [] and r["base_max_offset_m"] is None
+
+
+def test_report_event_opened_before_t0_closed_inside_window(tmp_path):
+    """Event opened before t0, closed inside window → included with correct duration."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    base = 1000.0
+    t0, t1 = base + 100, base + 200
+
+    # Event opens before t0, closes inside window
+    rid = ev.record(base + 50, "diagnosis", "open", "test outage", level="serious", code="test_code")
+    ev.close_event(rid, base + 150)
+
+    r = compute_report(ep, ev, t0, t1)
+    assert len(r["events"]) == 1
+    event = r["events"][0]
+    assert event["code"] == "test_code"
+    assert event["t"] == base + 50
+    assert event["t_close"] == base + 150
+    assert event["duration_s"] == 100.0
+
+    # Verify fully-before-window event is excluded
+    rid2 = ev.record(base + 10, "diagnosis", "open", "earlier outage", level="serious", code="earlier_code")
+    ev.close_event(rid2, base + 40)
+
+    r = compute_report(ep, ev, t0, t1)
+    assert len(r["events"]) == 1  # Only the first event overlaps the window
+    assert r["events"][0]["code"] == "test_code"
+
+
+def test_report_event_opened_before_t0_still_open(tmp_path):
+    """Event opened before t0, still open (no t_close) → included with duration_s None."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    base = 1000.0
+    t0, t1 = base + 100, base + 200
+
+    # Event opens before t0 and remains open
+    ev.record(base + 50, "diagnosis", "open", "ongoing outage", level="serious", code="ongoing_code")
+
+    r = compute_report(ep, ev, t0, t1)
+    assert len(r["events"]) == 1
+    event = r["events"][0]
+    assert event["code"] == "ongoing_code"
+    assert event["t"] == base + 50
+    assert event["t_close"] is None
+    assert event["duration_s"] is None

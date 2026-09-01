@@ -26,11 +26,12 @@ def compute_report(epochs: EpochStore, events: EventStore, t0: float, t1: float)
             hourly.append({"hour": h, "epochs": len(rows),
                            "fix_ratio": _fix_ratio(rows, fixed_q)})
     evs = []
-    for r in events.query(since=t0):
-        if r.t > t1:
+    for r in events.query(since=0.0):
+        still_open = r.t_close is None
+        if r.t > t1 or ((not still_open) and r.t_close < t0):
             continue
         evs.append({"code": r.code, "level": r.level, "t": r.t, "t_close": r.t_close,
-                    "duration_s": (r.t_close - r.t) if r.t_close else None,
+                    "duration_s": (r.t_close - r.t) if r.t_close is not None else None,
                     "message": r.detail})
     hist = [h for h in epochs.base_history() if t0 <= h[0] <= t1]
     base_max = None
