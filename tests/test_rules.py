@@ -73,3 +73,13 @@ def test_rule7_divergence_needs_hold():
 def test_no_data_at_all():
     v = diagnose(_inp(sol=None, sol_t=None, corr_last_t=None, corr_age=None), CFG)
     assert v.code == "no_data" and v.level == "warning"
+
+
+def test_solver_dead_is_not_reported_fixed():
+    v = diagnose(_inp(sol=None, sol_t=None), CFG)
+    assert v.code == "no_solution" and v.level == "warning"
+
+
+def test_solver_disabled_is_info():
+    v = diagnose(_inp(sol=None, sol_t=None, solver_enabled=False), CFG)
+    assert v.code == "no_solution" and v.level == "info"

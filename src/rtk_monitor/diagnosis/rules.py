@@ -20,6 +20,7 @@ class DiagnosisInput:
     slip_count_30s: int = 0
     divergence_m: float | None = None      # |610 fused - rtkrcv| horizontal
     divergence_since: float | None = None  # host time divergence first exceeded
+    solver_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,13 @@ def diagnose(inp: DiagnosisInput, cfg: DiagnosisCfg) -> Verdict:
         return Verdict("serious", "device_divergence",
                        f"610 输出与独立解算偏差 {inp.divergence_m:.2f}m——疑似 610 融合问题")
 
-    if inp.sol is not None and inp.sol.q != 1:
+    # Check for missing solver output
+    if inp.sol is None:
+        if inp.solver_enabled:
+            return Verdict("warning", "no_solution",
+                           "独立解算无输出——rtkrcv 未运行或未收敛")
+        return Verdict("info", "no_solution", "独立解算未启用")
+
+    if inp.sol.q != 1:
         return Verdict("info", "not_fixed", f"非固定解（Q={inp.sol.q}）")
     return Verdict("ok", "rtk_fixed", "RTK 固定")
