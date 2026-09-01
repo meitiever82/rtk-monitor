@@ -11,10 +11,12 @@ import math
 import socket
 import sys
 import time
+from dataclasses import asdict
 from typing import Callable, Coroutine
 
 import can
 
+from rtk_monitor.broadcast import Broadcaster
 from rtk_monitor.config import Config, load_config
 from rtk_monitor.collectors.can import CanCollector
 from rtk_monitor.collectors.reserve import LocalReserver
@@ -86,6 +88,10 @@ class App:
             self.events, close_hysteresis_s=cfg.diagnosis.close_hysteresis_s,
             on_transition=self._on_diagnosis_transition)
 
+        # Plan 3a: broadcaster for WebSocket subscribers.
+        self.broadcaster = Broadcaster()
+        self.last_status: dict | None = None
+
         # Diagnosis-loop state.
         self._corr_last_t: float | None = None
         self._base_offset: float | None = None
@@ -94,6 +100,7 @@ class App:
         self._div_since: float | None = None
         self._slips = SlipWindow()
         self._last_epoch_write: dict[str, int] = {}
+        self._last_pos_pub: float = 0.0
 
         self._sol_collector = TcpCollector(
             "gnss_solution_link", cfg.gnss_solution.host, cfg.gnss_solution.port,
@@ -260,6 +267,22 @@ class App:
                         age=cyc.diff_age, lat=cyc.lat, lon=cyc.lon, alt=cyc.alt,
                         sde=cyc.pos_sigma[0], sdn=cyc.pos_sigma[1], sdu=cyc.pos_sigma[2],
                         heading=cyc.heading, speed=cyc.vel[3]))
+                # Publish position message at ≤5Hz (independent of 1Hz epoch decimation).
+                if cyc.host_time - self._last_pos_pub >= 0.2:
+                    self._last_pos_pub = cyc.host_time
+                    try:
+                        self.broadcaster.publish({
+                            "type": "position",
+                            "t": cyc.host_time,
+                            "src": "can",
+                            "lat": cyc.lat,
+                            "lon": cyc.lon,
+                            "heading": cyc.heading,
+                            "q": cyc.sat_status,
+                            "speed": cyc.vel[3]
+                        })
+                    except Exception:
+                        _logger.exception("position broadcast failed")
         except Exception:
             _logger.exception("can epoch decode failed")
 
@@ -270,12 +293,25 @@ class App:
             _logger.exception("event record failed: %s %s %r", name, state, detail)
 
     def _on_diagnosis_transition(self, kind: str, verdict, t: float) -> None:
-        if self.publisher is None:
-            return
+        if self.publisher is not None:
+            try:
+                self.publisher.publish_event(kind, verdict, t)
+            except Exception:
+                _logger.exception("publish_event failed")
+        # Publish event message to broadcaster regardless of UDP publisher state.
         try:
-            self.publisher.publish_event(kind, verdict, t)
+            self.broadcaster.publish({
+                "type": "event",
+                "action": kind,
+                "event": {
+                    "t": t,
+                    "level": verdict.level,
+                    "code": verdict.code,
+                    "message": verdict.message
+                }
+            })
         except Exception:
-            _logger.exception("publish_event failed")
+            _logger.exception("event broadcast failed")
 
     def sol_collector_port(self) -> int | None:
         """Route-3 (GPCHC) listen port. Used by tests and Plan 3's UI."""
@@ -374,6 +410,48 @@ class App:
             "corr_gap_s": now - self._corr_last_t if self._corr_last_t else 0.0
         }
         self.event_machine.update(now, v, lat, lon, metrics=metrics)
+
+        # Publish status message (1Hz from diagnosis loop).
+        try:
+            sol_dict = None
+            if sol is not None:
+                sol_dict = {
+                    "t": sol.t,
+                    "q": sol.q,
+                    "sats": sol.ns,
+                    "age": sol.age,
+                    "ratio": sol.ratio,
+                    "lat": sol.lat,
+                    "lon": sol.lon,
+                    "alt": sol.alt,
+                    "sdn": sol.sdn,
+                    "sde": sol.sde,
+                    "sdu": sol.sdu
+                }
+            can_dict = asdict(can_e) if can_e is not None else None
+            gpchc_e = self.epochs.latest("gpchc")
+            gpchc_dict = asdict(gpchc_e) if gpchc_e is not None else None
+            corr_last_t = self._corr_last_t if self._corr_last_t is not None else 0.0
+            status_msg = {
+                "type": "status",
+                "t": now,
+                "verdict": {
+                    "level": v.level,
+                    "code": v.code,
+                    "message": v.message
+                },
+                "sol": sol_dict,
+                "can": can_dict,
+                "gpchc": gpchc_dict,
+                "corr": {
+                    "last_t": corr_last_t,
+                    "base_offset_m": self._base_offset if self._base_offset is not None else 0.0
+                }
+            }
+            self.last_status = status_msg
+            self.broadcaster.publish(status_msg)
+        except Exception:
+            _logger.exception("status broadcast failed")
 
     async def _supervise(self, name: str, coro_factory: Callable[[], Coroutine]) -> None:
         """Run coro_factory() forever, restarting it on any non-cancellation
