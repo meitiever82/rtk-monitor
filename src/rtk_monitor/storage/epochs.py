@@ -55,6 +55,8 @@ class EpochStore:
         self._db = sqlite3.connect(db_path)
         self._db.executescript(_SCHEMA)
         self._db.commit()
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA busy_timeout=5000")
 
     def add(self, e: Epoch) -> int:
         vals = [getattr(e, c) for c in _COLS]
@@ -98,6 +100,13 @@ class EpochStore:
         return self._db.execute(
             "SELECT t, x, y, z FROM base_station WHERE t>=? ORDER BY t",
             (since,)).fetchall()
+
+    def prune(self, before_t: float) -> int:
+        cur = self._db.execute("DELETE FROM epochs WHERE t < ?", (before_t,))
+        n = cur.rowcount
+        n += self._db.execute("DELETE FROM base_station WHERE t < ?", (before_t,)).rowcount
+        self._db.commit()
+        return n
 
     def close(self) -> None:
         self._db.close()

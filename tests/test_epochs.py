@@ -35,3 +35,17 @@ def test_persists_across_reopen(tmp_path):
     s.add(Epoch(t=1.0, src="gpchc", q=4))
     s.close()
     assert EpochStore(p).latest("gpchc").t == 1.0
+
+
+def test_prune_removes_old_rows(tmp_path):
+    s = EpochStore(tmp_path / "e.db")
+    s.add(Epoch(t=100.0, src="can")); s.add(Epoch(t=200.0, src="can"))
+    s.add_base(100.0, 1, 2, 3); s.add_base(200.0, 1, 2, 3)
+    n = s.prune(before_t=150.0)
+    assert n == 2
+    assert s.latest("can").t == 200.0 and len(s.base_history()) == 1
+
+
+def test_wal_mode(tmp_path):
+    s = EpochStore(tmp_path / "e.db")
+    assert s._db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"

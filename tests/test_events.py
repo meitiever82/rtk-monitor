@@ -43,3 +43,12 @@ def test_migrates_old_schema(tmp_path):
     s = EventStore(p)                      # must not raise; must migrate
     rows = s.query()
     assert rows[0].etype == "x" and rows[0].level is None
+
+
+def test_prune_keeps_open_events(tmp_path):
+    s = EventStore(tmp_path / "e.db")
+    rid = s.record(100.0, "diagnosis", "open", "x")
+    s.record(100.0, "diagnosis", "open", "y")
+    s.close_event(rid, 110.0)
+    assert s.prune(before_t=200.0) == 1          # only the closed one
+    assert [r.state for r in s.query()] == ["open"]

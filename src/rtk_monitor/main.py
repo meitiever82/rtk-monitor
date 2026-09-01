@@ -392,6 +392,9 @@ class App:
             try:
                 cleanup_logs(self.cfg.data_root, self.cfg.retention_days,
                              self.cfg.disk_watermark_pct)
+                cutoff = time.time() - self.cfg.db_retention_days * 86400.0
+                self.epochs.prune(cutoff)
+                self.events.prune(cutoff)
             except Exception:
                 # A transient filesystem error must not kill the hourly loop.
                 _logger.exception("cleanup failed")

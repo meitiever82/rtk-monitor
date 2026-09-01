@@ -37,6 +37,8 @@ class EventStore:
         self._db = sqlite3.connect(db_path)
         self._db.executescript(_SCHEMA)
         self._db.commit()
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA busy_timeout=5000")
         self._migrate()
 
     def _migrate(self) -> None:
@@ -67,6 +69,12 @@ class EventStore:
         self._db.execute("UPDATE events SET state='closed', t_close=? WHERE id=?",
                          (t_close, event_id))
         self._db.commit()
+
+    def prune(self, before_t: float) -> int:
+        cur = self._db.execute(
+            "DELETE FROM events WHERE state='closed' AND t < ?", (before_t,))
+        self._db.commit()
+        return cur.rowcount
 
     def close(self) -> None:
         self._db.close()
