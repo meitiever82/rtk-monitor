@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import html
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
@@ -61,10 +62,10 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
             return "-" if v is None else f"{v:.1%}"
 
         rows = "".join(
-            f"<tr><td>{h['hour']}</td><td>{h['epochs']}</td><td>{pct(h['fix_ratio'])}</td></tr>"
+            f"<tr><td>{html.escape(str(h['hour']))}</td><td>{h['epochs']}</td><td>{pct(h['fix_ratio'])}</td></tr>"
             for h in r["hourly"])
-        evs = "".join(f"<tr><td>{e['code']}</td><td>{e['level']}</td>"
-                      f"<td>{e['duration_s'] or '-'}</td><td>{e['message']}</td></tr>"
+        evs = "".join(f"<tr><td>{html.escape(e['code'] or '')}</td><td>{html.escape(e['level'] or '')}</td>"
+                      f"<td>{e['duration_s'] or '-'}</td><td>{html.escape(e['message'] or '')}</td></tr>"
                       for e in r["events"])
         fr = "-" if r["fix_ratio"] is None else f"{r['fix_ratio']:.1%}"
         return f"""<html><meta charset="utf-8"><body style="font-family:sans-serif;max-width:800px;margin:2em auto">

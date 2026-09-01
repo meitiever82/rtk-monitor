@@ -484,7 +484,11 @@ class App:
     async def _supervise(self, name: str, coro_factory: Callable[[], Coroutine]) -> None:
         """Run coro_factory() forever, restarting it on any non-cancellation
         exception. A single misbehaving route (a collector task dying for an
-        unforeseen reason) must never unwind the other routes via gather."""
+        unforeseen reason) must never unwind the other routes via gather.
+        Catches SystemExit as well as Exception: uvicorn's serve() sys.exit()s
+        on bind failure; consequently any supervised coroutine calling sys.exit
+        becomes a restart, not a process exit — intentional under the
+        collection-never-stops principle."""
         while True:
             try:
                 await coro_factory()

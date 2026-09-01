@@ -38,9 +38,10 @@ class EventRow:
 
 class EventStore:
     def __init__(self, db_path: str | Path) -> None:
-        # check_same_thread=False: see EpochStore's __init__ for why (Task 9's
-        # web layer queries this store from a different thread than the one
-        # that constructed it).
+        # check_same_thread=False: production access stays on the event loop
+        # thread (async handlers), but test clients (TestClient blocking
+        # portal) touch the store from another thread; sqlite3 is compiled
+        # serialized (threadsafety=3) so sharing is safe.
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._db.commit()

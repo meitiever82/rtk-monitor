@@ -55,6 +55,21 @@ def test_report_json_and_html(tmp_path):
     assert "固定解可用率" in html
 
 
+def test_report_html_escaping(tmp_path):
+    c, fake = _client(tmp_path)
+    fake.epochs.add(Epoch(t=100.0, src="rtkrcv", q=1))
+    # Record an event with potentially malicious content in code, level, and message
+    fake.events.record(100.0, "test", "open", "detail", level="<script>alert(1)</script>",
+                       code="<img src=x onerror=alert(1)>")
+    html_text = c.get("/report", params={"t0": 0, "t1": 200}).text
+    # Assert that raw script tags are not in the HTML
+    assert "<script>" not in html_text
+    assert "<img src=" not in html_text
+    # Assert that the escaped versions are present
+    assert "&lt;script&gt;" in html_text
+    assert "&lt;img src=" in html_text
+
+
 def test_tiles_404_without_store(tmp_path):
     c, _ = _client(tmp_path)
     assert c.get("/tiles/2/1/1.png").status_code == 404

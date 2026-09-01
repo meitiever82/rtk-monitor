@@ -52,13 +52,10 @@ class Epoch:
 
 class EpochStore:
     def __init__(self, db_path: str | Path) -> None:
-        # check_same_thread=False: the web layer (Task 9) queries this store
-        # from whatever thread FastAPI/uvicorn dispatches a request onto,
-        # which differs from the thread that constructed the store (matches
-        # TileStore's existing precedent for the same cross-thread need).
-        # Sqlite's default "serialized" threading mode makes this safe as
-        # long as callers don't share a single in-flight statement across
-        # threads, which none of our access patterns do.
+        # check_same_thread=False: production access stays on the event loop
+        # thread (async handlers), but test clients (TestClient blocking
+        # portal) touch the store from another thread; sqlite3 is compiled
+        # serialized (threadsafety=3) so sharing is safe.
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._db.commit()
