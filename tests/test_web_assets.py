@@ -1,6 +1,8 @@
+import re
 from pathlib import Path
 
-VENDOR = Path(__file__).resolve().parents[1] / "web" / "vendor"
+WEB = Path(__file__).resolve().parents[1] / "web"
+VENDOR = WEB / "vendor"
 
 REQUIRED = [
     "vue.esm-browser.prod.js",
@@ -21,3 +23,18 @@ def test_vendor_manifest_pins_versions():
     text = (VENDOR / "VENDOR.md").read_text()
     for needle in ("vue@3.4.38", "leaflet@1.9.4", "uplot@1.6.30"):
         assert needle in text
+
+
+def test_index_references_resolve():
+    html = (WEB / "index.html").read_text()
+    refs = re.findall(r'(?:src|href)="/([^"]+)"', html)
+    assert refs, "index.html should reference local assets"
+    for ref in refs:
+        assert (WEB / ref).is_file(), f"broken reference: /{ref}"
+
+
+def test_index_is_dark_chinese_ui():
+    html = (WEB / "index.html").read_text()
+    assert 'lang="zh-CN"' in html and "rtk-monitor" in html
+    css = (WEB / "style.css").read_text()
+    assert "--bg" in css                      # theme variables present
