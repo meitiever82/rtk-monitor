@@ -152,7 +152,7 @@
 
 3. 安装依赖：
    ```bash
-   python3 -m pip install -r requirements.txt
+   python3 -m pip install .
    ```
 
 ### 4.2 启动应用
@@ -195,21 +195,17 @@ docker build -t rtk-monitor:latest .
 
 ### 5.2 启动容器
 
-使用 Docker Compose：
+使用 Docker Compose（`docker-compose.yml`）：
 
 ```yaml
 version: '3.8'
 services:
   rtk-monitor:
-    image: rtk-monitor:latest
-    container_name: rtk-monitor
+    build: .
     restart: always
     network_mode: host
     volumes:
       - /data:/data
-      - ./config.yaml:/data/config.yaml
-    devices:
-      - /dev/can0:/dev/can0
 ```
 
 运行：
@@ -218,11 +214,11 @@ docker compose up -d --build
 ```
 
 **关键配置**：
-- `network_mode: host` — 共享主机网络栈（必须，用于访问 CAN 和 TCP 端口）
+- `build: .` — 从 Dockerfile 构建镜像
+- `network_mode: host` — 共享主机网络栈（必须，用于访问 SocketCAN 和 TCP 端口）
 - `/data:/data` — 挂载数据卷，存储日志、数据库、裸流
-- `config.yaml` — 将配置文件挂载到容器 `/data/config.yaml`
-- `devices` — 挂载 SocketCAN 设备（必须）
-- `web.static_dir: /app/web` — 容器内静态文件路径（配置文件应明确指定）
+- `restart: always` — 容器异常退出时自动重启
+- **注意**：SocketCAN 是网络命名空间接口，不需要 `/dev` 字符设备映射；`network_mode: host` 已覆盖
 
 ### 5.3 验证容器运行
 
@@ -349,7 +345,7 @@ docker compose down -v  # 谨慎：会删除 /data 挂载的所有数据
    pkill -f "rtkrcv -"
    ```
 3. **预期行为**：
-   - Web 界面状态条在 60 秒内变为灰色"no_solution"
+   - Web 界面状态条**文字**在约 6 秒内变为"独立解算无输出——rtkrcv 未运行或未收敛"，但**徽章颜色仍按 CAN 融合解显示**（通常仍为绿色）；仅当 CAN 也断开时才变为灰色"无数据"
    - 事件表出现诊断事件
    - 应用自动重启 rtkrcv 子进程（见进程监控日志）
 4. 验证恢复：观察状态条是否在 2-5 分钟内恢复为绿色（根据数据量和 RTK 锁定速度变化）

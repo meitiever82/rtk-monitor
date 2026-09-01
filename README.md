@@ -26,7 +26,7 @@
 
 3. **安装依赖**：
    ```bash
-   python3 -m pip install -r requirements.txt
+   python3 -m pip install .
    ```
 
 4. **启动应用**：

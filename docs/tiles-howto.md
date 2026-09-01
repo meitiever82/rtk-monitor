@@ -16,6 +16,7 @@ MBTiles 是一种基于 SQLite 的瓦片容器格式，标准结构如下：
 - 包含金字塔层级瓦片（zoom level 0~28）
 - 支持栅格（PNG/JPG）和矢量（PBF）两种瓦片
 - 适配 Leaflet 等主流 Web GIS 库
+- **TMS 行号翻转**：TileStore 处理 XYZ 请求时内部进行 TMS 行号翻转（row = 2^z-1-y），与标准 MBTiles 输出一致；仅手工编写转换器时需注意此细节
 
 ### 1.2 必须的坐标系：EPSG:3857
 
