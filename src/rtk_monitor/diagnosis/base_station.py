@@ -1,12 +1,14 @@
 """Learn the base station's ECEF baseline from 1005 messages; report offsets."""
 from __future__ import annotations
 
+import logging
 import math
 import statistics
 
 from rtk_monitor.storage.epochs import EpochStore
 
 _KV_KEY = "base_xyz"
+_logger = logging.getLogger(__name__)
 
 
 class BaseStationMonitor:
@@ -18,8 +20,15 @@ class BaseStationMonitor:
         self._baseline: tuple[float, float, float] | None = None
         stored = store.kv_get(_KV_KEY)
         if stored:
-            x, y, z = (float(v) for v in stored.split(","))
-            self._baseline = (x, y, z)
+            try:
+                x, y, z = (float(v) for v in stored.split(","))
+            except ValueError:
+                # Corrupt kv row (e.g. truncated write during a power loss
+                # under docker restart:always) must not brick startup --
+                # fall back to a fresh warmup instead of crashing.
+                _logger.exception("corrupt base_xyz kv value %r; re-warming up", stored)
+            else:
+                self._baseline = (x, y, z)
 
     def feed(self, t: float, x: float, y: float, z: float) -> float | None:
         if self._last_hist is None or any(
