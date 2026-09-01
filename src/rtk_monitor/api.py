@@ -113,6 +113,14 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
 <h2>事件（{len(r['events'])}）</h2><table border=1 cellpadding=4><tr><th>类型</th><th>级别</th><th>时长(s)</th><th>结论</th></tr>{evs}</table>
 </body></html>"""
 
+    @api.get("/api/tiles_info")
+    async def tiles_info():
+        # The frontend probes this instead of a fixed /tiles/{z}/{x}/{y}.png
+        # coordinate: with a mine-only tileset, any single hardcoded tile can
+        # legitimately be missing even though the store itself is populated,
+        # so a fixed-tile probe would false-negative into the grid fallback.
+        return {"available": app.tile_store is not None}
+
     @api.get("/tiles/{z}/{x}/{y}.png")
     async def tile(z: int, x: int, y: int):
         if not (0 <= z <= 25):

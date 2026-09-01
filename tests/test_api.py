@@ -136,6 +136,21 @@ def test_tiles_z_in_range_reaches_store(tmp_path):
     assert r.status_code == 200 and r.content == b"PNGDATA"
 
 
+def test_tiles_info_unavailable_without_store(tmp_path):
+    c, fake = _client(tmp_path)
+    assert c.get("/api/tiles_info").json() == {"available": False}
+
+
+def test_tiles_info_available_with_store(tmp_path):
+    c, fake = _client(tmp_path)
+
+    class _Stub:
+        def get(self, z, x, y):
+            raise AssertionError("tiles_info must not query the store")
+    fake.tile_store = _Stub()
+    assert c.get("/api/tiles_info").json() == {"available": True}
+
+
 def test_ws_replay_roundtrip(tmp_path):
     c, fake = _client(tmp_path)
     fake.epochs.add(Epoch(t=100.5, src="can", q=4, lat=44.5, lon=90.2, heading=170.0, speed=5.0))
