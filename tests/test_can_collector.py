@@ -55,6 +55,33 @@ async def test_link_watchdog_fires_disconnected_then_connected():
         assert ("can_link", "connected") in states
 
 
+async def test_reopen_failure_survives_and_emits_event():
+    """If bus_factory raises during a reopen attempt, the collector task
+    must not die -- log it, emit one 'reopen_failed' event, and keep the
+    supervise-friendly loop going (next timeout retries)."""
+    def failing_factory():
+        raise OSError("no such device")
+
+    events: list[str] = []
+    with can.Bus(interface="virtual", channel="reopen-fail-test") as first:
+        c = CanCollector(first, on_frame=lambda *a: None,
+                         on_event=lambda n, s, d: events.append(s),
+                         data_timeout=0.05, bus_factory=failing_factory,
+                         reopen_after=2)
+        task = asyncio.create_task(c.run())
+        for _ in range(300):
+            if "reopen_failed" in events:
+                break
+            await asyncio.sleep(0.01)
+        assert "reopen_failed" in events
+        assert not task.done(), "collector task must survive a failed reopen"
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 def test_candump_writer_format(tmp_path):
     w = CandumpWriter(tmp_path, "can0", clock=lambda: 1756699200.0)
     w.append(0x320, bytes.fromhex("44093c1cc30600aa"), t=1756699200.123456)

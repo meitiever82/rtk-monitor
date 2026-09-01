@@ -106,6 +106,7 @@ class App:
             self._sol_collector,
         ]
         channel = cfg.can_channel
+        bus_factory: Callable[[], can.BusABC] | None = None
         if channel.startswith("virtual:"):
             name = channel.split(":", 1)[1]
             self._bus = can.Bus(interface="virtual", channel=name)
@@ -115,8 +116,13 @@ class App:
         else:
             self._bus = can.Bus(interface="socketcan", channel=channel)
             log_name = channel
+            # Real hardware: wire the reopen watchdog so a wedged SocketCAN
+            # link (e.g. after a controller reset) gets a fresh bus instead
+            # of leaving the collector reading from a dead one forever.
+            bus_factory = lambda: can.Bus(interface="socketcan", channel=channel)
         self._can_log = CandumpWriter(cfg.data_root, log_name)
-        self._can_collector = CanCollector(self._bus, self._on_can, self._on_event)
+        self._can_collector = CanCollector(self._bus, self._on_can, self._on_event,
+                                            bus_factory=bus_factory)
 
         # rtkrcv solver: only wired when a binary path is configured. The
         # corr/obs ports it dials come from the reserver's bound ports, which

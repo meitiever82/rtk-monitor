@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Callable
 
@@ -9,6 +10,8 @@ import can
 
 OnFrame = Callable[[int, bytes, float], None]
 OnEvent = Callable[[str, str, str], None]
+
+_logger = logging.getLogger(__name__)
 
 
 class CanCollector:
@@ -23,6 +26,7 @@ class CanCollector:
         self._reopen_after = reopen_after
         self._seen_any = False
         self._was_down = False
+        self._reopen_failed_emitted = False
 
     def _emit(self, name: str, state: str, detail: str) -> None:
         if self._on_event is not None:
@@ -46,15 +50,29 @@ class CanCollector:
                                        f"no frames for {self._data_timeout:.0f}s")
                     if (self._bus_factory is not None
                             and timeouts >= self._reopen_after):
-                        notifier.stop()
-                        bus.shutdown()
-                        bus = self._bus_factory()
-                        reader = can.AsyncBufferedReader()
-                        notifier = can.Notifier(bus, [reader],
-                                                loop=asyncio.get_running_loop())
-                        if self._on_event:
-                            self._on_event("can_link", "reopened", "bus reopened")
-                        timeouts = 0
+                        try:
+                            notifier.stop()
+                            bus.shutdown()
+                            bus = self._bus_factory()
+                            reader = can.AsyncBufferedReader()
+                            notifier = can.Notifier(bus, [reader],
+                                                    loop=asyncio.get_running_loop())
+                            if self._on_event:
+                                self._on_event("can_link", "reopened", "bus reopened")
+                            timeouts = 0
+                            self._reopen_failed_emitted = False
+                        except Exception:
+                            # Reopen itself failed (e.g. interface still down).
+                            # Don't let this kill the collector task -- log it,
+                            # emit one event (not one per retry), and keep the
+                            # old (now-dead) bus/notifier around so the loop
+                            # keeps ticking on timeouts and retries reopening
+                            # next time the threshold is hit.
+                            _logger.exception("can bus reopen failed")
+                            if self._on_event and not self._reopen_failed_emitted:
+                                self._on_event("can_link", "reopen_failed",
+                                               "bus reopen failed")
+                                self._reopen_failed_emitted = True
                     continue
                 if self._was_down or not self._seen_any:
                     if self._on_event:
