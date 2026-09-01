@@ -95,9 +95,45 @@ def test_report_html_escaping(tmp_path):
     assert "&lt;img src=" in html_text
 
 
+def test_report_html_shows_zero_duration_not_dash(tmp_path):
+    """e['duration_s'] or '-' rendered a real 0.0 duration as '-' (0.0 is
+    falsy). Only an actually-missing duration_s (still-open event) should
+    show the dash."""
+    c, fake = _client(tmp_path)
+    fake.epochs.add(Epoch(t=100.0, src="rtkrcv", q=1))
+    rid = fake.events.record(100.0, "diagnosis", "open", "x", level="serious", code="corr_outage")
+    fake.events.close_event(rid, 100.0)              # duration_s == 0.0
+    html_text = c.get("/report", params={"t0": 0, "t1": 200}).text
+    assert "<td>0.0</td>" in html_text
+    assert "corr_outage</td><td>serious</td><td>-</td>" not in html_text
+
+
 def test_tiles_404_without_store(tmp_path):
     c, _ = _client(tmp_path)
     assert c.get("/tiles/2/1/1.png").status_code == 404
+
+
+def test_tiles_z_out_of_range_404s_without_touching_store(tmp_path):
+    c, fake = _client(tmp_path)
+
+    class _Stub:
+        def get(self, z, x, y):
+            raise AssertionError("store must not be queried for an out-of-range z")
+    fake.tile_store = _Stub()
+    assert c.get("/tiles/26/1/1.png").status_code == 404
+    assert c.get("/tiles/-1/1/1.png").status_code == 404
+
+
+def test_tiles_z_in_range_reaches_store(tmp_path):
+    c, fake = _client(tmp_path)
+
+    class _Stub:
+        def get(self, z, x, y):
+            assert 0 <= z <= 25
+            return b"PNGDATA"
+    fake.tile_store = _Stub()
+    r = c.get("/tiles/10/1/1.png")
+    assert r.status_code == 200 and r.content == b"PNGDATA"
 
 
 def test_ws_replay_roundtrip(tmp_path):

@@ -97,7 +97,8 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
             f"<tr><td>{html.escape(str(h['hour']))}</td><td>{h['epochs']}</td><td>{pct(h['fix_ratio'])}</td></tr>"
             for h in r["hourly"])
         evs = "".join(f"<tr><td>{html.escape(e['code'] or '')}</td><td>{html.escape(e['level'] or '')}</td>"
-                      f"<td>{e['duration_s'] or '-'}</td><td>{html.escape(e['message'] or '')}</td></tr>"
+                      f"<td>{'-' if e['duration_s'] is None else e['duration_s']}</td>"
+                      f"<td>{html.escape(e['message'] or '')}</td></tr>"
                       for e in r["events"])
         fr = "-" if r["fix_ratio"] is None else f"{r['fix_ratio']:.1%}"
         return f"""<html><meta charset="utf-8"><body style="font-family:sans-serif;max-width:800px;margin:2em auto">
@@ -108,6 +109,8 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
 
     @api.get("/tiles/{z}/{x}/{y}.png")
     async def tile(z: int, x: int, y: int):
+        if not (0 <= z <= 25):
+            raise HTTPException(404, "invalid zoom")
         if app.tile_store is None:
             raise HTTPException(404, "no tiles configured")
         data = app.tile_store.get(z, x, y)
