@@ -3,7 +3,7 @@
 // them without a bundler or import map; web/app.js (never node-tested) uses
 // absolute /js/... paths instead, matching how the FastAPI StaticFiles mount
 // serves web/ at "/".
-import { fixClass } from "./protocol.js";
+import { eventKey } from "./protocol.js";
 
 const TRAIL_MAX = 3600, SERIES_MAX = 1800, EVENTS_MAX = 200;
 
@@ -22,11 +22,28 @@ export function createStore(Vue) {
     if (arr.length > TRAIL_MAX) arr.splice(0, arr.length - TRAIL_MAX);
   }
 
+  // Skip a push identical to the last point on this trail (same lat/lon/q):
+  // a stale-epoch source (e.g. gpchc re-delivering the same fix while other
+  // routes advance) would otherwise flood the trail with duplicate points.
+  function pushTrailDedup(src, lat, lon, q) {
+    const arr = s.trails[src], last = arr[arr.length - 1];
+    if (last && last.lat === lat && last.lon === lon && last.q === q) return;
+    pushTrail(src, lat, lon, q);
+  }
+
+  // Shared by clearForReplay/resumeLive/replay_end: resets trails+series so
+  // the map/timelines don't carry stale replay data (e.g. a straight line
+  // from the last replayed point to the live position) into the next mode.
+  function resetTrails() {
+    s.trails = { can: [], rtkrcv: [], gpchc: [] };
+    s.series = { t: [], sats: [], age: [], sigma: [], ratio: [] };
+  }
+
   s.applyMessage = (m) => {
     if (m.type === "status") {
       s.status = m;
       if (m.sol) pushTrail("rtkrcv", m.sol.lat, m.sol.lon, m.sol.q);
-      if (m.gpchc) pushTrail("gpchc", m.gpchc.lat, m.gpchc.lon, m.gpchc.q);
+      if (m.gpchc) pushTrailDedup("gpchc", m.gpchc.lat, m.gpchc.lon, m.gpchc.q);
       const sol = m.sol || {}, can = m.can || {};
       for (const [k, v] of Object.entries({
         t: m.t, sats: sol.sats ?? can.sats ?? null,
@@ -40,9 +57,16 @@ export function createStore(Vue) {
     } else if (m.type === "position") {
       pushTrail(m.src, m.lat, m.lon, m.q);
     } else if (m.type === "event") {
-      s.events.unshift({ action: m.action, ...m.event });
-      if (s.events.length > EVENTS_MAX) s.events.pop();
+      const ev = { action: m.action, ...m.event };
+      const key = eventKey(ev);
+      if (!s.events.some((e) => eventKey(e) === key)) {
+        s.events.unshift(ev);
+        if (s.events.length > EVENTS_MAX) s.events.pop();
+      }
     } else if (m.type === "replay_end") {
+      // Also clear trails/series: otherwise the map draws a straight line
+      // from the last replayed point to wherever live resumes.
+      resetTrails();
       s.replaying = false;
     } else if (m.type === "error") {
       s.lastError = m.detail; s.replaying = false;
@@ -50,9 +74,16 @@ export function createStore(Vue) {
   };
 
   s.clearForReplay = () => {
-    s.trails = { can: [], rtkrcv: [], gpchc: [] };
-    s.series = { t: [], sats: [], age: [], sigma: [], ratio: [] };
+    resetTrails();
     s.replaying = true;
   };
+
+  // Used by replaybar's "回到实时" button to leave replay mode explicitly
+  // (as opposed to replay_end, which fires when a replay window finishes).
+  s.resumeLive = () => {
+    resetTrails();
+    s.replaying = false;
+  };
+
   return s;
 }

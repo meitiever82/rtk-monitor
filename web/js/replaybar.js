@@ -18,7 +18,7 @@ export function mountReplaybar(Vue, store, ws) {
         store.clearForReplay();
         ws.sendReplay(a, b, Number(this.speed));
       },
-      live() { ws.sendLive(); store.replaying = false; },
+      live() { ws.sendLive(); store.resumeLive(); },
     },
     template: `
       <div class="replaybar">

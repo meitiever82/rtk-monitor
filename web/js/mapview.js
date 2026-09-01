@@ -31,7 +31,9 @@ const GridFallback = typeof L !== "undefined" ? L.GridLayer.extend({
 export class MapView {
   constructor(elId, store) {
     this.store = store;
-    this.map = L.map(elId, { zoomControl: true }).setView([0, 0], 3);
+    // preferCanvas: rendering trails (frequently redrawn polylines) as canvas
+    // rather than SVG DOM elements avoids per-point DOM churn on long trails.
+    this.map = L.map(elId, { zoomControl: true, preferCanvas: true }).setView([0, 0], 3);
     this.map.on("dragstart", () => { this._userMoved = true; });
 
     // Probe /api/tiles_info rather than a fixed tile coordinate: with a
@@ -52,6 +54,10 @@ export class MapView {
     this.sigma = null;
     this._centered = false;
     this._userMoved = false;
+    // Per-src trail length as last rendered: lets render() skip
+    // clearLayers()+redraw for a trail that hasn't grown/reset since the
+    // last frame (replay resets an array to [] -> length changes -> redraw).
+    this._trailLen = { can: -1, rtkrcv: -1, gpchc: -1 };
   }
 
   _style(src, cls) {
@@ -63,31 +69,46 @@ export class MapView {
 
   render() {
     for (const src of ["can", "rtkrcv", "gpchc"]) {
+      const trail = this.store.trails[src];
+      if (trail.length === this._trailLen[src]) continue;   // unchanged: skip redraw
+      this._trailLen[src] = trail.length;
       const g = this.groups[src];
       g.clearLayers();
-      for (const seg of segmentTrail(this.store.trails[src]))
+      for (const seg of segmentTrail(trail))
         L.polyline(seg.latlngs, this._style(src, seg.cls)).addTo(g);
     }
 
     const st = this.store.status || {};
     const pos = st.can && st.can.lat != null ? st.can : (st.sol && st.sol.lat != null ? st.sol : null);
+    const sol = st.sol;
+    // Hide the sigma circle once its inputs go away (e.g. sol dropped out,
+    // or sdn missing) instead of leaving a stale circle at the last position.
+    if (this.sigma && (!sol || sol.sdn == null)) {
+      this.sigma.remove();
+      this.sigma = null;
+    }
     if (!pos) return;
 
     const ll = [pos.lat, pos.lon];
     const heading = pos.heading ?? 0;
     // .veh-arrow (style.css) already styles an inner <svg> arrow sized to
-    // the divIcon; rotate the wrapper by heading to point it.
-    const icon = L.divIcon({
-      className: "veh",
-      html: `<div class="veh-arrow" style="transform:rotate(${heading}deg)">`
-          + `<svg viewBox="0 0 24 24"><polygon points="12,2 20,22 12,17 4,22"/></svg></div>`,
-      iconSize: [18, 18],
-      iconAnchor: [9, 9],
-    });
-    if (!this.marker) this.marker = L.marker(ll, { icon }).addTo(this.map);
-    else { this.marker.setLatLng(ll); this.marker.setIcon(icon); }
+    // the divIcon. The divIcon itself is created once and reused: rotation
+    // is applied by mutating the existing DOM element's transform instead of
+    // rebuilding the icon HTML (and its DOM) on every render.
+    if (!this.marker) {
+      const icon = L.divIcon({
+        className: "veh",
+        html: `<div class="veh-arrow"><svg viewBox="0 0 24 24"><polygon points="12,2 20,22 12,17 4,22"/></svg></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
+      this.marker = L.marker(ll, { icon }).addTo(this.map);
+    } else {
+      this.marker.setLatLng(ll);
+    }
+    const arrowEl = this.marker.getElement()?.querySelector(".veh-arrow");
+    if (arrowEl) arrowEl.style.transform = `rotate(${heading}deg)`;
 
-    const sol = st.sol;
     if (sol && sol.sdn != null && sol.sde != null) {
       const r = Math.hypot(sol.sdn, sol.sde);
       if (!this.sigma) this.sigma = L.circle(ll, { radius: r, color: "#4a90d9", weight: 1 }).addTo(this.map);

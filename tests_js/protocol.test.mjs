@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixClass, badge, fmtAge, fmtSigma, fmtT, fmtNum, segmentTrail, SPEED_OPTIONS }
+import { fixClass, badge, fmtAge, fmtSigma, fmtT, fmtNum, segmentTrail, SPEED_OPTIONS, eventKey }
   from "../web/js/protocol.js";
 
 test("fixClass per source semantics", () => {
@@ -55,3 +55,13 @@ test("segmentTrail splits on class change with continuity", () => {
 });
 
 test("speed options", () => assert.deepEqual(SPEED_OPTIONS, [1, 10, 60]));
+
+test("eventKey identifies same open/close occurrence, distinguishes others", () => {
+  const a = { t: 100, action: "open", code: "no_data" };
+  const b = { t: 100, action: "open", code: "no_data" };
+  const c = { t: 100, action: "close", code: "no_data" };
+  const d = { t: 100, action: "open", code: "sat_low" };
+  assert.equal(eventKey(a), eventKey(b));
+  assert.notEqual(eventKey(a), eventKey(c));
+  assert.notEqual(eventKey(a), eventKey(d));
+});

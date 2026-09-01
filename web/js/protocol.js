@@ -37,6 +37,13 @@ export function fmtT(t) {
   return new Date(t * 1000).toTimeString().slice(0, 8);
 }
 
+// Dedup key for an event message merged as { action, ...event } (see store.js
+// applyMessage's "event" branch): identifies the same open/close occurrence
+// so a duplicate push (e.g. re-delivered on reconnect) is skipped.
+export function eventKey(e) {
+  return `${e.t}|${e.action}|${e.code}`;
+}
+
 export function segmentTrail(points) {
   const segs = [];
   let cur = null;
