@@ -139,3 +139,92 @@ async def test_listen_mode_closes_on_cancel():
     assert closed_at_iteration is not None, "Writers were never closed after cancel"
     data = await asyncio.wait_for(reader.read(1024), timeout=0.5)
     assert data == b"", f"Expected EOF but got {repr(data)}"
+
+
+async def test_listen_mode_disconnect_event_only_on_transition():
+    """Verify that N sequential connect/close cycles produce exactly N 'connected'
+    and N 'disconnected' events in per-connection semantics."""
+    events = []
+    c = TcpCollector("sol", "127.0.0.1", 0, on_data=lambda d, t: None,
+                     on_event=lambda n, s, det: events.append(s), listen=True)
+    task = asyncio.create_task(c.run())
+    await asyncio.sleep(0.05)
+    # 3 sequential connect/close cycles
+    for cycle in range(3):
+        _, w = await asyncio.open_connection("127.0.0.1", c.bound_port)
+        await asyncio.sleep(0.02)  # Let handler process "connected" event
+        w.close()
+        await asyncio.sleep(0.05)  # Let handler process "disconnected" event
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # Exactly N connected and N disconnected events for N cycles
+    assert events.count("connected") == 3, f"Expected 3 'connected', got {events.count('connected')}"
+    assert events.count("disconnected") == 3, f"Expected 3 'disconnected', got {events.count('disconnected')}"
+
+
+async def test_listen_mode_concurrent_peers_per_connection_events():
+    """Verify per-connection event semantics with concurrent peers.
+
+    Scenario: open two concurrent connections, close peer 1 → poll for exactly
+    one 'disconnected'; peer 2 still connected. Close peer 2 → poll for second
+    'disconnected'. Assert final counts are 2/2 and first close produced exactly
+    one 'disconnected' while peer 2 was still connected.
+    """
+    events: list[str] = []
+    c = TcpCollector("sol", "127.0.0.1", 0, on_data=lambda d, t: None,
+                     on_event=lambda n, s, det: events.append(s), listen=True)
+    task = asyncio.create_task(c.run())
+    await asyncio.sleep(0.05)
+    assert c.bound_port is not None
+
+    # Open peer 1
+    r1, w1 = await asyncio.open_connection("127.0.0.1", c.bound_port)
+    await asyncio.sleep(0.05)  # Let handler process "connected"
+
+    # Open peer 2
+    r2, w2 = await asyncio.open_connection("127.0.0.1", c.bound_port)
+    await asyncio.sleep(0.05)  # Let handler process second "connected"
+
+    # Verify both connected events fired
+    assert events.count("connected") == 2, f"Expected 2 'connected' after both peers open, got {events.count('connected')}"
+
+    # Close peer 1 and poll until exactly one "disconnected" event
+    w1.close()
+    for _ in range(200):
+        if events.count("disconnected") == 1:
+            break
+        await asyncio.sleep(0.01)
+    assert events.count("disconnected") == 1, \
+        f"Expected exactly 1 'disconnected' after peer 1 close, got {events.count('disconnected')}"
+
+    # Verify peer 2 still has open connection (no second disconnected yet)
+    data = b"test"
+    w2.write(data)
+    await w2.drain()
+    # Peer 2 should still be connected, so the send should succeed without exception
+    assert events.count("disconnected") == 1, \
+        f"Peer 2 should still be connected, but got {events.count('disconnected')} disconnected events"
+
+    # Close peer 2 and poll until second "disconnected" event
+    w2.close()
+    for _ in range(200):
+        if events.count("disconnected") == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert events.count("disconnected") == 2, \
+        f"Expected exactly 2 'disconnected' after peer 2 close, got {events.count('disconnected')}"
+
+    # Final counts should be 2/2
+    assert events.count("connected") == 2, \
+        f"Final: expected 2 'connected', got {events.count('connected')}"
+    assert events.count("disconnected") == 2, \
+        f"Final: expected 2 'disconnected', got {events.count('disconnected')}"
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

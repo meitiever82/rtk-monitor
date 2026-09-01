@@ -19,3 +19,27 @@ def test_reopen_persists(tmp_path):
     s.record(1.0, "x", "open")
     s.close()
     assert len(EventStore(p).query()) == 1
+
+
+def test_extended_columns_and_close(tmp_path):
+    s = EventStore(tmp_path / "e.db")
+    rid = s.record(100.0, "diagnosis", "open", "差分中断 12s",
+                   level="serious", code="corr_outage", lat=44.5, lon=90.28)
+    s.close_event(rid, 130.0)
+    row = s.query()[0]
+    assert row.level == "serious" and row.code == "corr_outage"
+    assert row.t_close == 130.0 and row.lat == 44.5
+
+
+def test_migrates_old_schema(tmp_path):
+    import sqlite3
+    p = tmp_path / "old.db"
+    db = sqlite3.connect(p)
+    db.execute("CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+               " t REAL NOT NULL, etype TEXT NOT NULL, state TEXT NOT NULL,"
+               " detail TEXT NOT NULL DEFAULT '')")
+    db.execute("INSERT INTO events (t, etype, state) VALUES (1.0, 'x', 'open')")
+    db.commit(); db.close()
+    s = EventStore(p)                      # must not raise; must migrate
+    rows = s.query()
+    assert rows[0].etype == "x" and rows[0].level is None

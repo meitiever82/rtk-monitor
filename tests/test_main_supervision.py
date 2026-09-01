@@ -127,6 +127,42 @@ async def test_supervisor_restarts_crashed_collector(monkeypatch, tmp_path):
     app.events.close()
 
 
+async def test_socketcan_branch_wires_bus_factory(monkeypatch, tmp_path):
+    """T11 built CanCollector's reopen watchdog, but App only ever passed a
+    bus_factory=None -- dead code in production. The real (non-virtual)
+    socketcan branch must supply a bus_factory that reopens the same
+    channel."""
+    calls: list[tuple[str, str]] = []
+
+    class FakeBus:
+        def shutdown(self):
+            pass
+
+    def fake_can_bus(interface, channel):
+        calls.append((interface, channel))
+        return FakeBus()
+
+    monkeypatch.setattr(main_mod.can, "Bus", fake_can_bus)
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(textwrap.dedent(f"""\
+        data_root: {tmp_path}/log
+        db_path: {tmp_path}/rtk.db
+        corrections: {{host: 127.0.0.1, port: 0, listen: true}}
+        raw_obs: {{host: 127.0.0.1, port: 0, listen: true}}
+        gnss_solution: {{host: 127.0.0.1, port: 0, listen: true}}
+        can_channel: can0
+        reserve: {{corrections_port: 0, raw_obs_port: 0}}
+        retention_days: 14
+        disk_watermark_pct: 85.0
+        """))
+    app = build_app(load_config(cfg_file))
+    assert calls == [("socketcan", "can0")]           # __init__'s own bus
+    factory = app._can_collector._bus_factory
+    assert factory is not None
+    factory()
+    assert calls == [("socketcan", "can0"), ("socketcan", "can0")]
+
+
 async def test_supervisor_propagates_cancellation(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "_SUPERVISE_RESTART_S", 5.0)
     app = _build_app(tmp_path)
