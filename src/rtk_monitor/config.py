@@ -49,6 +49,8 @@ class PublishCfg:
 class WebCfg:
     port: int = 8080
     tiles_path: str = ""
+    host: str = "0.0.0.0"
+    static_dir: str = ""
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,8 @@ def load_config(path: str | Path) -> Config:
                            host=str(p.get("host", "127.0.0.1")),
                            port=int(p.get("port", 15030))),
         web=WebCfg(port=int(w.get("port", 8080)),
-                   tiles_path=str(w.get("tiles_path", ""))),
+                   tiles_path=str(w.get("tiles_path", "")),
+                   host=str(w.get("host", "0.0.0.0")),
+                   static_dir=str(w.get("static_dir", ""))),
         db_retention_days=int(raw.get("db_retention_days", 30)),
     )

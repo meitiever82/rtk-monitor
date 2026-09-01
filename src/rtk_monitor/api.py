@@ -15,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from rtk_monitor.replay import replay_messages
 from rtk_monitor.report import compute_report
 
-_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 _logger = logging.getLogger(__name__)
 
 # {"cmd":"replay","t1":9e15} used to reach replay_messages unvalidated and
@@ -24,6 +23,13 @@ _logger = logging.getLogger(__name__)
 # (independent of anything replay.py does) so a malicious/buggy client can
 # never request more than this much real time.
 _MAX_REPLAY_WINDOW_S = 48 * 3600.0
+
+
+def _web_dir(app) -> Path:
+    cfg = getattr(app, "cfg", None)
+    if cfg is not None and getattr(cfg.web, "static_dir", ""):
+        return Path(cfg.web.static_dir)
+    return Path(__file__).resolve().parents[2] / "web"
 
 
 def _validate_replay_cmd(cmd: dict) -> tuple[float, float, float] | None:
@@ -201,5 +207,5 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
                     t.cancel()
             app.broadcaster.unsubscribe(q)
 
-    api.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
+    api.mount("/", StaticFiles(directory=str(_web_dir(app)), html=True), name="web")
     return api

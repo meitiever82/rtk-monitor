@@ -86,3 +86,7 @@ def test_web_and_retention_defaults(tmp_path):
 def test_web_explicit():
     cfg = load_config(EXAMPLE)
     assert cfg.web.port == 8080          # example carries the section
+
+def test_web_host_and_static_dir_defaults():
+    cfg = load_config(EXAMPLE)
+    assert cfg.web.host == "0.0.0.0" and cfg.web.static_dir == ""

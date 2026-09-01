@@ -234,3 +234,19 @@ def test_ws_replay_error_is_observed_and_live_recovers(tmp_path, monkeypatch):
         fake.broadcaster.publish({"type": "status", "t": 42.0})
         m2 = ws.receive_json()
         assert m2 == {"type": "status", "t": 42.0}
+
+
+def test_static_dir_configurable(tmp_path):
+    from rtk_monitor.api import create_api
+    from fastapi.testclient import TestClient
+    d = tmp_path / "static"; d.mkdir()
+    (d / "index.html").write_text("<h1>custom</h1>")
+    fake = _FakeApp(tmp_path)
+
+    class _W:  # duck cfg
+        static_dir = str(d); host = "0.0.0.0"; port = 0; tiles_path = ""
+    class _C:
+        web = _W()
+    fake.cfg = _C()
+    c = TestClient(create_api(fake))
+    assert "custom" in c.get("/").text

@@ -104,3 +104,15 @@ def test_peak_metrics_accumulate_and_persist(tmp_path):
     assert row.state == "closed"
     assert json.loads(row.peak)["corr_gap_s"] == 12.0
     assert row.lat_close == 44.1 and row.lon_close == 90.1
+
+def test_min_suffix_metrics_aggregate_min(tmp_path):
+    store = EventStore(tmp_path / "e.db")
+    m = EventMachine(store, close_hysteresis_s=1.0)
+    m.update(100.0, OUT, metrics={"sats_min": 12.0, "corr_gap_s": 3.0})
+    m.update(101.0, OUT, metrics={"sats_min": 4.0, "corr_gap_s": 9.0})
+    m.update(102.0, OUT, metrics={"sats_min": 8.0, "corr_gap_s": 5.0})
+    m.update(103.0, OK); m.update(105.0, OK)
+    import json
+    peak = json.loads(store.query()[0].peak)
+    assert peak["sats_min"] == 4.0          # min, not abs-max
+    assert peak["corr_gap_s"] == 9.0        # abs-max unchanged
