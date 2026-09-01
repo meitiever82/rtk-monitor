@@ -69,15 +69,15 @@ rtk-monitor/
 ├── src/rtk_monitor/           # Python 应用源码
 │   ├── main.py                # 主程序入口、采集协程、诊断引擎
 │   ├── config.py              # 配置加载与验证
-│   ├── collector/             # 四路数据采集（TCP/CAN）
-│   ├── parser/                # RTCM/GPCHC/CAN 解析
+│   ├── collectors/            # 四路数据采集（TCP/CAN）
+│   ├── parsers/               # RTCM/GPCHC/CAN 解析
 │   ├── solver/                # rtkrcv 子进程管理
 │   ├── diagnosis/             # 诊断规则链、事件状态机
-│   ├── store/                 # SQLite 读写、裸流存储
+│   ├── storage/               # SQLite 读写、裸流存储
 │   ├── api.py                 # FastAPI 服务、WebSocket 推送、回放、报告
 │   └── replay.py              # 历史数据回放引擎
 ├── web/                       # Vue3 + Leaflet 前端单页应用
-├── tests/                     # 单元与集成测试（164 项）
+├── tests/                     # 单元与集成测试（168 项）
 ├── scripts/                   # 构建脚本（build_rtkrcv.sh 等）
 ├── config.yaml.example        # 配置文件示例
 ├── docs/                      # 部署、集成、消息契约文档
@@ -134,7 +134,7 @@ rtk-monitor/
 
 ## 测试
 
-运行完整测试套件（164 项）：
+运行完整测试套件（168 项）：
 
 ```bash
 python3 -m pytest -v
@@ -160,7 +160,6 @@ python3 -m pytest -q
 
 - ✓ 前端 UI：实时监控、事件回放、报告生成
 - ✓ WebSocket 全改造：实时推送、回放消息同构
-- ✓ 诊断规则链完善：基站坐标变动检测、610 与独立解偏差告警
 - ✓ 部署文档：硬件/网络/配置/常见问题完整指南
 - ✓ 集成测试清单：上车前核对点与演练项
 

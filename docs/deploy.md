@@ -173,9 +173,13 @@
 
 ### 4.3 查看日志
 
+应用未落盘日志文件，日志写到进程 stderr（`main()` 已配置
+`logging.basicConfig(level=logging.INFO, ...)`）。前台运行时直接可见；
+后台/托管运行时按需重定向或交给进程管理器（systemd/supervisor 等）采集：
+
 ```bash
-# 实时日志
-tail -f logs/rtk_monitor.log
+# 例：systemd 托管时查看日志
+journalctl -u rtk-monitor -f
 
 # 查看进程与 rtkrcv 子进程
 ps aux | grep rtkrcv
@@ -192,6 +196,11 @@ ps aux | grep rtkrcv
 ```bash
 docker build -t rtk-monitor:latest .
 ```
+
+**重要**：Dockerfile 构建阶段需要从 GitHub 克隆并编译 RTKLIB（demo5，已固定到具体 commit，
+见 Dockerfile 中 `RTKLIB_DEMO5_SHA` 注释），镜像须在有网环境预构建（ARM64 主机或使用
+`docker buildx` 交叉构建），矿区现场网络通常无法访问外网，无法在现场重新构建镜像——现场
+只需 `docker load`/`docker compose up -d` 已构建好的镜像。
 
 ### 5.2 启动容器
 
@@ -237,12 +246,14 @@ curl http://localhost:8080
 ### 5.4 停止与清理
 
 ```bash
-# 停止容器
+# 停止并移除容器
 docker compose down
-
-# 保留数据卷，只移除容器
-docker compose down -v  # 谨慎：会删除 /data 挂载的所有数据
 ```
+
+`docker-compose.yml` 用的是 bind mount（`/data:/data`），不是具名 volume，
+`docker compose down -v` 的 `-v` 只清理具名 volume，对 `/data` 下的数据没有影响——
+两条命令效果相同，日常使用 `docker compose down` 即可。若确实要清空 `/data`
+下的数据（config.yaml、gnsslog、rtk.db、mbtiles），需手动 `rm -rf /data/...`，请谨慎操作。
 
 ---
 
@@ -291,9 +302,10 @@ docker compose down -v  # 谨慎：会删除 /data 挂载的所有数据
    <binary_path> -h
    ```
    
-3. 查看日志中的 rtkrcv 启动错误：
+3. 查看日志中的 rtkrcv 启动错误（容器运行用 `docker logs -f rtk-monitor`；
+   裸机运行看进程 stderr，见 [§4.3](#43-查看日志)）：
    ```bash
-   grep -i "rtkrcv\|solver" logs/rtk_monitor.log | tail -20
+   docker logs rtk-monitor 2>&1 | grep -i "rtkrcv\|solver" | tail -20
    ```
 
 4. 如果 rtkrcv 无法编译或运行，参考 [rtkrcv 真机集成核对清单](integration-rtkrcv.md#rtkrcv-真机集成核对清单) 逐项核对
@@ -334,9 +346,10 @@ docker compose down -v  # 谨慎：会删除 /data 挂载的所有数据
 
 **处理**：
 1. 现场确认基站是否实际移位
-2. 如确认为真实变动，点击 Web 界面的"更新基准"按钮或通过 API：
+2. 如确认为真实变动，通过 API 更新基准（Web 界面当前无对应按钮，仅提供 API 入口；
+   取用最近一次观测到的 1005 电文坐标作为新基准）：
    ```bash
-   curl -X POST http://localhost:8080/api/base_reset
+   curl -X POST http://<车IP>:8080/api/base_reset
    ```
 3. 后续偏移会以新坐标为基准
 
