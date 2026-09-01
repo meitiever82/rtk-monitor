@@ -564,6 +564,8 @@ def build_app(cfg: Config) -> App:
 
 
 def main() -> None:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = load_config(sys.argv[1] if len(sys.argv) > 1 else "config.yaml")
     app = build_app(cfg)
     try:
