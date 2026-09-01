@@ -3,10 +3,13 @@ import json
 import socket
 import struct
 import textwrap
+import time
 
 from rtk_monitor.config import load_config
 from rtk_monitor.main import build_app
 from rtk_monitor.parsers.rtcm import crc24q
+from rtk_monitor.parsers.rtksol import RtkSolution
+from rtk_monitor.storage.epochs import Epoch
 
 
 def _cfg(tmp_path, udp_port, corr_port):
@@ -76,3 +79,86 @@ async def test_epochs_and_corr_outage_event(tmp_path):
         pass
     assert any(m["type"] == "gnss_event" and m["event"] == "corr_outage" for m in seen)
     w.close(); corr_srv.close(); rx.close()
+
+
+def _minimal_cfg(tmp_path, **diag_overrides):
+    p = tmp_path / "config.yaml"
+    diag = {"corr_gap_s": 30.0, "close_hysteresis_s": 0.5, **diag_overrides}
+    diag_lines = ", ".join(f"{k}: {v}" for k, v in diag.items())
+    p.write_text(textwrap.dedent(f"""\
+        data_root: {tmp_path}/log
+        db_path: {tmp_path}/rtk.db
+        corrections: {{host: 127.0.0.1, port: 1}}
+        raw_obs: {{host: 127.0.0.1, port: 1}}
+        gnss_solution: {{host: 127.0.0.1, port: 0, listen: true}}
+        can_channel: virtual:{tmp_path.name}
+        reserve: {{corrections_port: 0, raw_obs_port: 0}}
+        retention_days: 14
+        disk_watermark_pct: 85.0
+        rtkrcv: {{binary: "/bin/true"}}
+        diagnosis: {{{diag_lines}}}
+        """))
+    return load_config(p)
+
+
+def _fake_sol(lat=44.5, lon=90.28, q=1, ns=30):
+    return RtkSolution(t=0.0, lat=lat, lon=lon, alt=600.0, q=q, ns=ns,
+                       sdn=0.01, sde=0.01, sdu=0.02, age=1.0, ratio=20.0)
+
+
+def test_stale_solution_degrades_to_no_solution(tmp_path):
+    """Item 1: if rtkrcv stops emitting, a frozen self._sol must not keep
+    reporting a frozen fix forever -- past sol_stale_s it must gate to None
+    and degrade through the existing no_solution warning path."""
+    app = build_app(_minimal_cfg(tmp_path, sol_stale_s=5.0))
+    app._corr_last_t = time.time()
+    app._sol = _fake_sol()
+    app._sol_t = time.time()
+    app._diagnosis_tick()                    # fresh sol -> no no_solution yet
+    codes = [e.code for e in app.events.query() if e.etype == "diagnosis"]
+    assert "no_solution" not in codes
+
+    app._sol_t = time.time() - 10            # older than sol_stale_s
+    app._diagnosis_tick()
+    codes = [e.code for e in app.events.query() if e.etype == "diagnosis"]
+    assert "no_solution" in codes
+    app._bus.shutdown()
+    app.events.close()
+
+
+def test_rtkrcv_epochs_throttled_to_1hz(tmp_path):
+    """Item 5: rtkrcv epochs must be decimated to 1Hz like gpchc/can, not
+    written at the solver's full solution rate."""
+    app = build_app(_minimal_cfg(tmp_path))
+    line = ("2026/08/27 04:15:55.400   44.501234567   90.287654321   617.1234"
+            "   1  38   0.0110   0.0123   0.0322  -0.0001   0.0002   0.0003"
+            "   0.80   25.0\r\n").encode()
+    app._on_rtksol(line, 100.2)
+    app._on_rtksol(line, 100.7)               # same integer second -> dropped
+    rows = app.epochs.query("rtkrcv", 0, 1e12)
+    assert len(rows) == 1
+    app._on_rtksol(line, 101.1)               # next second -> kept
+    rows = app.epochs.query("rtkrcv", 0, 1e12)
+    assert len(rows) == 2
+    app._bus.shutdown()
+    app.events.close()
+
+
+def test_div_since_cleared_when_inputs_vanish(tmp_path):
+    """Item 7: if divergence was held and the CAN/sol pairing drops out (no
+    fresh inputs to compare), the stale _div_since timer must not survive to
+    fire rule 7 instantly once data returns."""
+    app = build_app(_minimal_cfg(tmp_path))
+    t = time.time()
+    app._sol = _fake_sol(lat=44.5, lon=90.28)
+    app._sol_t = t
+    app.epochs.add(Epoch(t=t, src="can", q=4, sats=30, age=1.0,
+                         lat=44.50002, lon=90.28002))   # far enough to diverge
+    app._diagnosis_tick()
+    assert app._div_since is not None            # divergence held
+
+    app._sol_t = t - 10                            # pairing goes stale
+    app._diagnosis_tick()
+    assert app._div_since is None                  # must not survive
+    app._bus.shutdown()
+    app.events.close()

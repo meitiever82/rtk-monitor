@@ -211,13 +211,20 @@ class App:
                     continue
                 self._sol = sol
                 self._sol_t = t
-                try:
-                    self.epochs.add(Epoch(
-                        t=t, src="rtkrcv", q=sol.q, sats=sol.ns, age=sol.age,
-                        lat=sol.lat, lon=sol.lon, alt=sol.alt,
-                        sde=sol.sde, sdn=sol.sdn, sdu=sol.sdu, ratio=sol.ratio))
-                except Exception:
-                    _logger.exception("rtkrcv epoch store failed")
+                # rtkrcv emits at the solver's full solution rate (up to
+                # ~5-10Hz); decimate epoch storage to 1Hz like the other
+                # sources (gpchc/can) to avoid unbounded DB growth over a
+                # multi-week unattended run. publish_fix stays per-solution.
+                sec = int(t)
+                if self._last_epoch_write.get("rtkrcv") != sec:
+                    self._last_epoch_write["rtkrcv"] = sec
+                    try:
+                        self.epochs.add(Epoch(
+                            t=t, src="rtkrcv", q=sol.q, sats=sol.ns, age=sol.age,
+                            lat=sol.lat, lon=sol.lon, alt=sol.alt,
+                            sde=sol.sde, sdn=sol.sdn, sdu=sol.sdu, ratio=sol.ratio))
+                    except Exception:
+                        _logger.exception("rtkrcv epoch store failed")
                 if self.publisher is not None:
                     try:
                         self.publisher.publish_fix(sol, heading=self._latest_heading())
@@ -319,28 +326,40 @@ class App:
 
     def _diagnosis_tick(self) -> None:
         now = time.time()
+        # A frozen solver output (rtkrcv stopped emitting) must not be treated
+        # as a live solution forever -- gate it on recency so the rule chain
+        # degrades to the "no_solution" path instead of reporting a stale fix
+        # at a stale position indefinitely.
+        sol = (self._sol if (self._sol_t is not None
+                              and now - self._sol_t < self.cfg.diagnosis.sol_stale_s)
+               else None)
         div_m = None
         can_e = self.epochs.latest("can")
-        if (self._sol is not None and can_e is not None and can_e.lat is not None
+        if (sol is not None and can_e is not None and can_e.lat is not None
                 and abs((self._sol_t or 0) - can_e.t) < 2.0):
-            div_m = _horiz_dist_m(self._sol.lat, self._sol.lon, can_e.lat, can_e.lon)
-            sigma = max(1e-3, (self._sol.sdn ** 2 + self._sol.sde ** 2) ** 0.5)
+            div_m = _horiz_dist_m(sol.lat, sol.lon, can_e.lat, can_e.lon)
+            sigma = max(1e-3, (sol.sdn ** 2 + sol.sde ** 2) ** 0.5)
             if div_m > self.cfg.diagnosis.divergence_sigma * sigma:
                 self._div_since = self._div_since or now
             else:
                 self._div_since = None
+        else:
+            # No fresh sol/CAN pair to compare -- any previously-held
+            # divergence timer is stale and must not survive to fire rule 7
+            # instantly once data returns.
+            self._div_since = None
         inp = DiagnosisInput(
             now=now, corr_last_t=self._corr_last_t,
-            corr_age=self._sol.age if self._sol else
+            corr_age=sol.age if sol else
                      (can_e.age if can_e else None),
             base_offset_m=self._base_offset,
-            sol=self._sol, sol_t=self._sol_t,
+            sol=sol, sol_t=self._sol_t,
             sats=[], slip_count_30s=self._slips.count(now),
             divergence_m=div_m, divergence_since=self._div_since,
             solver_enabled=(self.cfg.rtkrcv.binary != ""))
         v = diagnose(inp, self.cfg.diagnosis)
-        lat = self._sol.lat if self._sol else (can_e.lat if can_e else None)
-        lon = self._sol.lon if self._sol else (can_e.lon if can_e else None)
+        lat = sol.lat if sol else (can_e.lat if can_e else None)
+        lon = sol.lon if sol else (can_e.lon if can_e else None)
         self.event_machine.update(now, v, lat, lon)
 
     async def _supervise(self, name: str, coro_factory: Callable[[], Coroutine]) -> None:

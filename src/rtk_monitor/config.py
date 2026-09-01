@@ -35,6 +35,7 @@ class DiagnosisCfg:
     divergence_sigma: float = 3.0
     divergence_hold_s: float = 5.0
     close_hysteresis_s: float = 10.0
+    sol_stale_s: float = 5.0
 
 
 @dataclass(frozen=True)
