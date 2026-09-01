@@ -335,6 +335,13 @@ class App:
                else None)
         div_m = None
         can_e = self.epochs.latest("can")
+        if can_e is not None and now - can_e.t > self.cfg.diagnosis.sol_stale_s:
+            # Same freshness gate as the solver output: latest("can") returns
+            # the newest row regardless of age, so after the CAN link dies a
+            # minutes-old epoch would keep feeding the corr-age fallback
+            # (rule 1 blaming the corrections link for a dead CAN feed) and
+            # the event lat/lon fallback (pinning events to a stale position).
+            can_e = None
         if (sol is not None and can_e is not None and can_e.lat is not None
                 and abs((self._sol_t or 0) - can_e.t) < 2.0):
             div_m = _horiz_dist_m(sol.lat, sol.lon, can_e.lat, can_e.lon)

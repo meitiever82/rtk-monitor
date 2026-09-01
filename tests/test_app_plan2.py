@@ -144,6 +144,30 @@ def test_rtkrcv_epochs_throttled_to_1hz(tmp_path):
     app.events.close()
 
 
+def test_stale_can_epoch_gated_from_fallbacks(tmp_path):
+    """A stale CAN epoch (link died while diff age was high) must not feed the
+    corr_age fallback -- rule 1 would blame the corrections link for a dead
+    CAN feed -- nor pin event locations to a long-gone position."""
+    app = build_app(_minimal_cfg(tmp_path, corr_gap_s=1e9, age_max_s=10.0))
+    now = time.time()
+    app._corr_last_t = now                       # corrections link is alive
+    app.epochs.add(Epoch(t=now - 60, src="can", q=4, sats=30, age=99.0,
+                         lat=44.5, lon=90.28))   # minutes-old epoch, high age
+    app._diagnosis_tick()
+    evs = [e for e in app.events.query() if e.etype == "diagnosis"]
+    assert "corr_outage" not in [e.code for e in evs]
+    assert all(e.lat is None for e in evs)       # stale position not attached
+
+    # A fresh CAN epoch must still feed the age fallback.
+    app.epochs.add(Epoch(t=time.time(), src="can", q=4, sats=30, age=99.0,
+                         lat=44.5, lon=90.28))
+    app._diagnosis_tick()
+    codes = [e.code for e in app.events.query() if e.etype == "diagnosis"]
+    assert "corr_outage" in codes
+    app._bus.shutdown()
+    app.events.close()
+
+
 def test_div_since_cleared_when_inputs_vanish(tmp_path):
     """Item 7: if divergence was held and the CAN/sol pairing drops out (no
     fresh inputs to compare), the stale _div_since timer must not survive to
