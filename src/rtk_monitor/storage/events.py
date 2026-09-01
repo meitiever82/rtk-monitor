@@ -81,8 +81,13 @@ class EventStore:
         self._db.commit()
 
     def prune(self, before_t: float) -> int:
+        # state != 'open' (not state='closed'): the table also holds
+        # link/crash rows (corrections_link/web/rtkrcv/... with state
+        # connected/disconnected/crashed/...) that never transition through
+        # 'closed'. Only rows still actively open (any etype) must survive
+        # retention -- everything else past the cutoff is prunable.
         cur = self._db.execute(
-            "DELETE FROM events WHERE state='closed' AND t < ?", (before_t,))
+            "DELETE FROM events WHERE t < ? AND state != 'open'", (before_t,))
         self._db.commit()
         return cur.rowcount
 

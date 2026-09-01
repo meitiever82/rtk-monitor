@@ -27,6 +27,11 @@ def compute_report(epochs: EpochStore, events: EventStore, t0: float, t1: float)
                            "fix_ratio": _fix_ratio(rows, fixed_q)})
     evs = []
     for r in events.query(since=0.0):
+        if r.etype != "diagnosis":
+            # The events table also stores link/crash rows (etype
+            # corr_link/web/rtkrcv/...); the report only summarizes
+            # diagnosis outcomes.
+            continue
         still_open = r.t_close is None
         if r.t > t1 or ((not still_open) and r.t_close < t0):
             continue

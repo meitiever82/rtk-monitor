@@ -54,6 +54,19 @@ def test_prune_keeps_open_events(tmp_path):
     assert [r.state for r in s.query()] == ["open"]
 
 
+def test_prune_deletes_non_open_link_rows(tmp_path):
+    """I3: the events table also holds link/crash rows (state connected/
+    disconnected/crashed/...) which the old 'state=closed' filter never
+    pruned. Any non-open row past the cutoff must go; open rows (of any
+    etype) must survive."""
+    s = EventStore(tmp_path / "e.db")
+    s.record(50.0, "corrections_link", "disconnected", "retry in 1s")
+    s.record(50.0, "diagnosis", "open", "still going")
+    assert s.prune(before_t=200.0) == 1
+    states = [(r.etype, r.state) for r in s.query()]
+    assert states == [("diagnosis", "open")]
+
+
 def test_close_event_with_position_and_peak(tmp_path):
     s = EventStore(tmp_path / "e.db")
     rid = s.record(100.0, "diagnosis", "open", "x", code="corr_outage")

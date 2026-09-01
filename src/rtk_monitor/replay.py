@@ -29,34 +29,45 @@ async def replay_messages(epochs: EpochStore, events: EventStore, t0: float, t1:
 
     sleep can be injected for testing (e.g., async def nosleep(_): pass).
     """
-    timeline: list[tuple[float, dict]] = []
-
     # Rows used for snapshot carry-forward (status.sol/can/gpchc) reach back
     # _SNAPSHOT_LOOKBACK_S before t0 so a status message near t0 can still
     # reflect an epoch written just before the window opened.
     snapshot_rows = {src: epochs.query(src, t0 - _SNAPSHOT_LOOKBACK_S, t1) for src in _SRC_ALL}
+
+    # Position + event messages are bounded by real rows (unlike the
+    # once-per-second status stream below, which scales with the window
+    # length) -- collecting and sorting them up front is cheap even for a
+    # multi-day window.
+    other: list[tuple[float, dict]] = []
 
     # Position messages are only emitted for epochs that actually fall inside
     # the replay window -- carry-forward is a snapshot-only concept.
     for src in _SRC_POS:
         for e in snapshot_rows[src]:
             if t0 <= e.t <= t1:
-                timeline.append((e.t, {"type": "position", "t": e.t, "src": src,
-                                       "lat": e.lat, "lon": e.lon, "heading": e.heading,
-                                       "q": e.q, "speed": e.speed}))
+                other.append((e.t, {"type": "position", "t": e.t, "src": src,
+                                    "lat": e.lat, "lon": e.lon, "heading": e.heading,
+                                    "q": e.q, "speed": e.speed}))
 
     # Event messages: query the full history (not just since=t0) so an event
     # opened before t0 but closed inside [t0, t1] still produces its close
     # message. Open/close actions are then independently window-filtered in
     # Python -- filtering "open" at the SQL level (since=t0) would silently
     # drop the close action for any event that started before the window.
+    # Only "diagnosis" rows are reconstructed here: the events table also
+    # stores link/crash rows (etype corrections_link/web/rtkrcv/...) that the
+    # realtime WS stream never turns into an event message.
     for row in events.query(since=0.0):
+        if row.etype != "diagnosis":
+            continue
         edict = {"t": row.t, "level": row.level, "code": row.code, "message": row.detail}
         if t0 <= row.t <= t1:
-            timeline.append((row.t, {"type": "event", "t": row.t, "action": "open", "event": edict}))
+            other.append((row.t, {"type": "event", "t": row.t, "action": "open", "event": edict}))
         if row.t_close is not None and t0 <= row.t_close <= t1:
-            timeline.append((row.t_close, {"type": "event", "t": row.t_close, "action": "close",
-                                           "event": dict(edict, t=row.t_close)}))
+            other.append((row.t_close, {"type": "event", "t": row.t_close, "action": "close",
+                                        "event": dict(edict, t=row.t_close)}))
+
+    other.sort(key=lambda x: x[0])
 
     # Status messages for each whole second in [t0, t1], with the latest
     # snapshot per source carried forward.
@@ -68,9 +79,41 @@ async def replay_messages(epochs: EpochStore, events: EventStore, t0: float, t1:
     # with t <= sec": each row is visited at most once across the whole loop,
     # giving O(seconds + epochs) instead of the O(seconds * epochs) a fresh
     # per-second list comprehension would cost.
+    #
+    # Rather than materializing one status entry per second into a combined
+    # list and sorting the whole thing (a caller-controlled t1 used to make
+    # this build billions of entries synchronously on the event loop before
+    # any window validation existed -- see api.py's ws cmd validation, which
+    # now clamps the window to <=48h), status messages are generated lazily
+    # here and merge-iterated against the small `other` list: `other` is
+    # already sorted, and the per-second sequence is naturally increasing, so
+    # a single forward pointer into `other` (flushed before each second's
+    # status) reproduces the same global time order as the old sort-then-walk
+    # without ever holding the full per-second stream in memory at once.
     idx = {src: 0 for src in _SRC_ALL}
     last: dict[str, object] = {src: None for src in _SRC_ALL}
+    prev = t0
+    oi = 0
+    n_other = len(other)
+
+    async def _advance(t: float) -> None:
+        nonlocal prev
+        if t > prev:
+            await sleep((t - prev) / max(speed, 0.01))
+        prev = t
+
     for sec in range(math.ceil(t0), math.floor(t1) + 1):
+        sec_f = float(sec)
+        # Flush any position/event message due strictly at-or-before this
+        # second before computing/yielding the second's status -- this
+        # matches the tie-break order of the old stable global sort, where
+        # position/event entries were appended before status entries.
+        while oi < n_other and other[oi][0] <= sec_f:
+            t, msg = other[oi]
+            await _advance(t)
+            yield msg
+            oi += 1
+
         for src in _SRC_ALL:
             rows = snapshot_rows[src]
             i = idx[src]
@@ -96,20 +139,20 @@ async def replay_messages(epochs: EpochStore, events: EventStore, t0: float, t1:
         can_dict = dataclasses.asdict(last["can"]) if last["can"] is not None else None
         gpchc_dict = dataclasses.asdict(last["gpchc"]) if last["gpchc"] is not None else None
 
-        timeline.append((float(sec), {
-            "type": "status", "t": float(sec),
+        await _advance(sec_f)
+        yield {
+            "type": "status", "t": sec_f,
             "verdict": {"level": "info", "code": "replay", "message": "回放"},
             "sol": sol_dict, "can": can_dict, "gpchc": gpchc_dict,
-            "corr": {"last_t": None, "base_offset_m": None}}))
+            "corr": {"last_t": None, "base_offset_m": None}}
 
-    # Sort timeline by time and yield messages with sleep delays.
-    timeline.sort(key=lambda x: x[0])
-    prev = t0
-    for t, msg in timeline:
-        if t > prev:
-            await sleep((t - prev) / max(speed, 0.01))
-        prev = t
+    # Flush any remaining position/event messages with t strictly between
+    # floor(t1) and t1 (a fractional tail past the last whole-second status).
+    while oi < n_other:
+        t, msg = other[oi]
+        await _advance(t)
         yield msg
+        oi += 1
 
     # End with replay_end message.
     yield {"type": "replay_end", "t": t1}

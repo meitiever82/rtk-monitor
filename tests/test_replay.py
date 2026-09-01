@@ -308,6 +308,52 @@ async def test_replay_status_carries_forward_epoch_before_t0(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_replay_excludes_non_diagnosis_events(tmp_path):
+    """The events table also stores link/crash rows (etype corr_link/web/
+    rtkrcv/...); replay must only reconstruct diagnosis events -- the
+    realtime WS stream never emits an event message for a link transition."""
+    ep = EpochStore(tmp_path / "e.db")
+    ev = EventStore(tmp_path / "e.db")
+    ev.record(100.5, "corrections_link", "disconnected", "retry in 1s")
+    ev.record(100.6, "web", "crashed", "restarting")
+    rid = ev.record(100.7, "diagnosis", "open", "差分中断", level="serious", code="corr_outage")
+    ev.close_event(rid, 101.0)
+
+    async def nosleep(_):
+        pass
+
+    msgs = await _collect(replay_messages(ep, ev, 100.0, 102.0, sleep=nosleep))
+    events = [m for m in msgs if m["type"] == "event"]
+
+    assert len(events) == 2                    # open + close for the diagnosis row only
+    codes = {m["event"]["code"] for m in events}
+    assert codes == {"corr_outage"}
+
+
+@pytest.mark.asyncio
+async def test_replay_handles_full_48h_window_efficiently(tmp_path):
+    """A clamped 48h window (the WS layer now guarantees this upper bound,
+    see api.py's cmd validation) must still generate its ~172800 per-second
+    status messages via merge iteration, not by pre-materializing the whole
+    range and sorting it -- this should stay fast even at the window's cap."""
+    import time as _time
+
+    ep = EpochStore(tmp_path / "e.db")
+    ev = EventStore(tmp_path / "e.db")
+
+    async def nosleep(_):
+        pass
+
+    start = _time.monotonic()
+    msgs = await _collect(replay_messages(ep, ev, 0.0, 172800.0, sleep=nosleep))
+    elapsed = _time.monotonic() - start
+
+    assert elapsed < 5.0
+    assert msgs[-1]["type"] == "replay_end"
+    assert sum(1 for m in msgs if m["type"] == "status") == 172801
+
+
+@pytest.mark.asyncio
 async def test_replay_status_uses_latest_snapshot(tmp_path):
     """Status messages use the latest epoch for each source ≤ the second."""
     ep = EpochStore(tmp_path / "e.db")

@@ -56,6 +56,19 @@ def test_report_event_opened_before_t0_closed_inside_window(tmp_path):
     assert r["events"][0]["code"] == "test_code"
 
 
+def test_report_excludes_non_diagnosis_events(tmp_path):
+    """The events table also stores link/crash rows (etype corr_link/web/
+    rtkrcv/...); the report's event table must only surface diagnosis rows."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    ev.record(50.0, "corrections_link", "disconnected", "retry in 1s")
+    rid = ev.record(60.0, "diagnosis", "open", "x", level="serious", code="corr_outage")
+    ev.close_event(rid, 70.0)
+
+    r = compute_report(ep, ev, 0.0, 100.0)
+    assert len(r["events"]) == 1
+    assert r["events"][0]["code"] == "corr_outage"
+
+
 def test_report_event_opened_before_t0_still_open(tmp_path):
     """Event opened before t0, still open (no t_close) → included with duration_s None."""
     ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
