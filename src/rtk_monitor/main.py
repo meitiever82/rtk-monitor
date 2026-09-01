@@ -227,7 +227,8 @@ class App:
                         _logger.exception("rtkrcv epoch store failed")
                 if self.publisher is not None:
                     try:
-                        self.publisher.publish_fix(sol, heading=self._latest_heading())
+                        self.publisher.publish_fix(sol, heading=self._latest_heading(),
+                                                   host_time=self._sol_t)
                     except Exception:
                         _logger.exception("publish_fix failed")
         except Exception:

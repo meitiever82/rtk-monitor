@@ -173,10 +173,12 @@ collector 将路 1、路 2 在 localhost 重新 serve（两个端口），rtkrcv
 APP 本体不依赖 ROS。UDP 单播/组播发布 JSON Lines，格式文档化、`ver` 字段版本化：
 
 ```json
-{"type":"gnss_fix","ver":1,"gps_time":...,"lat":...,"lon":...,"alt":...,
+{"type":"gnss_fix","ver":1,"gps_time":...,"host_time":...,"lat":...,"lon":...,"alt":...,
  "q":1,"sigma_e":0.01,"sigma_n":0.01,"sigma_u":0.03,"heading":...,"source":"rtkrcv"}
-{"type":"gnss_event","ver":1,"gps_time":...,"event":"corr_outage","state":"open","detail":"..."}
+{"type":"gnss_event","ver":1,"gps_time":...,"host_time":...,"event":"corr_outage","state":"open","detail":"..."}
 ```
+
+其中 `gps_time` 与 `host_time` 分别代表 GPS 时间和主机 Unix 秒：fix 消息中 `gps_time` 为 GPST（rtkrcv 解出的 GPS 时间），`host_time` 为该解抵达主机的时刻；event 消息中两者相等（都是诊断事件的触发时刻）。跨流对齐应使用 `host_time`。
 
 需要 ROS 时另起可选薄适配器进程（UDP→topic），casbot/GLIM 扩展模块订阅适配器输出。
 APP、适配器、GLIM 三者独立升级。
