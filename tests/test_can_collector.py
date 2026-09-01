@@ -89,3 +89,79 @@ async def test_bus_reopened_after_consecutive_timeouts():
     for b in made:
         try: b.shutdown()
         except Exception: pass
+
+
+async def test_can_recovery_event_after_reopen():
+    """Verify that after bus reopen, the next frame emits a 'connected' event.
+
+    Scenario: send frame 1 (connected) → timeout to disconnection → wait for
+    reopened event → send frame on NEW bus → verify second 'connected' appears
+    after the 'reopened' event.
+    """
+    made = []
+    def factory():
+        bus = can.Bus(interface="virtual", channel="recovery-test-rx")
+        made.append(bus)
+        return bus
+
+    events: list[str] = []
+    first = factory()
+    # Create separate tx bus for sending frames on the same channel
+    tx = can.Bus(interface="virtual", channel="recovery-test-rx")
+
+    c = CanCollector(first, on_frame=lambda *a: None,
+                     on_event=lambda n, s, d: events.append(s),
+                     data_timeout=0.05, bus_factory=factory, reopen_after=2)
+    task = asyncio.create_task(c.run())
+    await asyncio.sleep(0.05)
+
+    # Send first frame on tx bus → should trigger "connected"
+    tx.send(can.Message(arbitration_id=0x100, data=b"\x01", is_extended_id=False))
+    for _ in range(200):
+        if "connected" in events:
+            break
+        await asyncio.sleep(0.01)
+    assert "connected" in events, "First connected event should fire"
+
+    # Wait for timeout → "disconnected" event
+    for _ in range(200):
+        if "disconnected" in events:
+            break
+        await asyncio.sleep(0.01)
+    assert "disconnected" in events, "Disconnected event should fire after timeout"
+
+    # Wait for reopen event (after 2 consecutive timeouts)
+    for _ in range(500):
+        if "reopened" in events:
+            break
+        await asyncio.sleep(0.01)
+    assert "reopened" in events, "Reopened event should fire"
+    reopen_index = events.index("reopened")
+
+    # Send frame on the same tx channel (will be read by the new bus from factory)
+    tx.send(can.Message(arbitration_id=0x200, data=b"\x02", is_extended_id=False))
+
+    # Wait for second "connected" event AFTER "reopened"
+    second_connected_index = None
+    for _ in range(200):
+        connected_indices = [i for i, e in enumerate(events) if e == "connected"]
+        if len(connected_indices) >= 2 and connected_indices[-1] > reopen_index:
+            second_connected_index = connected_indices[-1]
+            break
+        await asyncio.sleep(0.01)
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    tx.shutdown()
+    for b in made:
+        try: b.shutdown()
+        except Exception: pass
+
+    assert second_connected_index is not None, \
+        f"Second 'connected' should appear after 'reopened'. Events: {events}"
+    assert second_connected_index > reopen_index, \
+        f"Second 'connected' (index {second_connected_index}) should be after 'reopened' (index {reopen_index})"
