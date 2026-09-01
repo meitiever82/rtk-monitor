@@ -83,7 +83,9 @@ class TcpCollector:
                 except OSError:
                     pass
             finally:
-                self._on_event(self._name, "disconnected", "peer closed")
+                if self._last_state != "disconnected":
+                    self._last_state = "disconnected"
+                    self._on_event(self._name, "disconnected", "peer closed")
                 writer.close()
                 self._active_writers.discard(writer)
 

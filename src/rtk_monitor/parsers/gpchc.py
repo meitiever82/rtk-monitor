@@ -28,11 +28,17 @@ class GpchcEpoch:
 class LineFramer:
     """Reassemble a TCP byte stream into complete text lines."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_buf: int = 65536) -> None:
         self._buf = b""
+        self._max = max_buf
+        self.overflows = 0
 
     def feed(self, data: bytes) -> list[str]:
         self._buf += data
+        if len(self._buf) > self._max and b"\n" not in self._buf:
+            self._buf = b""
+            self.overflows += 1
+            return []
         *lines, self._buf = self._buf.split(b"\n")
         return [ln.strip().decode("ascii", "replace") for ln in lines if ln.strip()]
 

@@ -65,3 +65,27 @@ def test_candump_writer_format(tmp_path):
     # No per-frame JSONL sidecar: candump lines already carry timestamps, so
     # the index would be pure waste at CAN frame rates (~700/s).
     assert list(day.glob("*.idx.jsonl")) == []
+
+
+async def test_bus_reopened_after_consecutive_timeouts():
+    made = []
+    def factory():
+        bus = can.Bus(interface="virtual", channel="reopen-test")
+        made.append(bus)
+        return bus
+    events = []
+    first = factory()
+    c = CanCollector(first, on_frame=lambda *a: None,
+                     on_event=lambda n, s, d: events.append(s),
+                     data_timeout=0.05, bus_factory=factory, reopen_after=2)
+    task = asyncio.create_task(c.run())
+    await asyncio.sleep(0.5)                  # several timeouts → at least one reopen
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert "reopened" in events and len(made) >= 2
+    for b in made:
+        try: b.shutdown()
+        except Exception: pass

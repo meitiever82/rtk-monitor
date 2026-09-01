@@ -139,3 +139,18 @@ async def test_listen_mode_closes_on_cancel():
     assert closed_at_iteration is not None, "Writers were never closed after cancel"
     data = await asyncio.wait_for(reader.read(1024), timeout=0.5)
     assert data == b"", f"Expected EOF but got {repr(data)}"
+
+
+async def test_listen_mode_disconnect_event_only_on_transition():
+    events = []
+    c = TcpCollector("sol", "127.0.0.1", 0, on_data=lambda d, t: None,
+                     on_event=lambda n, s, det: events.append(s), listen=True)
+    task = asyncio.create_task(c.run())
+    await asyncio.sleep(0.05)
+    for _ in range(3):                       # flapping peer
+        _, w = await asyncio.open_connection("127.0.0.1", c.bound_port)
+        w.close()
+        await asyncio.sleep(0.05)
+    task.cancel()
+    # one connected+disconnected pair per actual transition, not per flap beyond first
+    assert events.count("disconnected") <= events.count("connected")

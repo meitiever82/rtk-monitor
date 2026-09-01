@@ -39,3 +39,10 @@ def test_line_framer_reassembles_chunks():
     assert f.feed(s[:10].encode()) == []
     lines = f.feed((s[10:] + s).encode())
     assert lines == [_mk(BODY), _mk(BODY)]
+
+
+def test_line_framer_bounds_buffer():
+    f = LineFramer(max_buf=64)
+    f.feed(b"x" * 100)                        # no newline: must not grow forever
+    assert f.overflows == 1
+    assert f.feed(b"abc\n") == ["abc"]        # still functional afterwards
