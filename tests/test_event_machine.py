@@ -1,3 +1,5 @@
+import pytest
+
 from rtk_monitor.diagnosis.events import EventMachine
 from rtk_monitor.diagnosis.rules import Verdict
 from rtk_monitor.storage.events import EventStore
@@ -58,3 +60,33 @@ def test_info_does_not_open(tmp_path):
     store, m = _machine(tmp_path, tr)
     m.update(100.0, INFO)
     assert store.query() == [] and tr == []
+
+
+def test_close_callback_exception_safety(tmp_path):
+    """Verify _close() resets state before calling callback, so raises don't leave machine inconsistent."""
+    store = EventStore(tmp_path / "e.db")
+
+    def raising_callback(kind, verdict, t):
+        if kind == "close":
+            raise RuntimeError("Simulated callback failure")
+
+    m = EventMachine(store, close_hysteresis_s=10.0, on_transition=raising_callback)
+
+    # Open an event
+    m.update(100.0, OUT)
+    rows = store.query()
+    assert len(rows) == 1 and rows[0].state == "open"
+
+    # Try to close; callback will raise, but state should already be reset
+    m.update(101.0, OK)
+    with pytest.raises(RuntimeError, match="Simulated callback failure"):
+        m.update(112.0, OK)  # 11 s ok — triggers close with raising callback
+
+    # Machine state should be clean, allowing a new event of the same code
+    m.update(114.0, OUT)
+    rows = store.query()
+
+    # Should have two rows: first closed (from before the exception), second open
+    assert len(rows) == 2
+    assert rows[0].state == "closed" and rows[0].code == "corr_outage"
+    assert rows[1].state == "open" and rows[1].code == "corr_outage"

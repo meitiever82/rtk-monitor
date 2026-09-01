@@ -49,8 +49,9 @@ class EventMachine:
 
     def _close(self, t: float) -> None:
         assert self._open_id is not None and self._open_verdict is not None
-        self._store.close_event(self._open_id, t)
-        if self._cb:
-            self._cb("close", self._open_verdict, t)
+        event_id, verdict = self._open_id, self._open_verdict
         self._open_id = self._open_code = self._open_verdict = None
         self._ok_since = None
+        self._store.close_event(event_id, t)
+        if self._cb:
+            self._cb("close", verdict, t)
