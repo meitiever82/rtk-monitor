@@ -52,7 +52,14 @@ class Epoch:
 
 class EpochStore:
     def __init__(self, db_path: str | Path) -> None:
-        self._db = sqlite3.connect(db_path)
+        # check_same_thread=False: the web layer (Task 9) queries this store
+        # from whatever thread FastAPI/uvicorn dispatches a request onto,
+        # which differs from the thread that constructed the store (matches
+        # TileStore's existing precedent for the same cross-thread need).
+        # Sqlite's default "serialized" threading mode makes this safe as
+        # long as callers don't share a single in-flight statement across
+        # threads, which none of our access patterns do.
+        self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._db.commit()
         self._db.execute("PRAGMA journal_mode=WAL")

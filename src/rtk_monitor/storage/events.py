@@ -38,7 +38,10 @@ class EventRow:
 
 class EventStore:
     def __init__(self, db_path: str | Path) -> None:
-        self._db = sqlite3.connect(db_path)
+        # check_same_thread=False: see EpochStore's __init__ for why (Task 9's
+        # web layer queries this store from a different thread than the one
+        # that constructed it).
+        self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._db.commit()
         self._db.execute("PRAGMA journal_mode=WAL")

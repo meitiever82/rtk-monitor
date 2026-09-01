@@ -15,7 +15,9 @@ from dataclasses import asdict
 from typing import Callable, Coroutine
 
 import can
+import uvicorn
 
+from rtk_monitor.api import create_api
 from rtk_monitor.broadcast import Broadcaster
 from rtk_monitor.config import Config, load_config
 from rtk_monitor.collectors.can import CanCollector
@@ -36,6 +38,7 @@ from rtk_monitor.storage.cleanup import cleanup_logs
 from rtk_monitor.storage.epochs import Epoch, EpochStore
 from rtk_monitor.storage.events import EventStore
 from rtk_monitor.storage.rawlog import RawLogWriter
+from rtk_monitor.tiles import TileStore
 
 _CLEANUP_INTERVAL_S = 3600.0
 _SUPERVISE_RESTART_S = 5.0
@@ -91,6 +94,16 @@ class App:
         # Plan 3a: broadcaster for WebSocket subscribers.
         self.broadcaster = Broadcaster()
         self.last_status: dict | None = None
+        try:
+            self.tile_store: TileStore | None = TileStore(cfg.web.tiles_path)
+        except FileNotFoundError:
+            self.tile_store = None
+            _logger.info("tiles not configured (web.tiles_path=%r); /tiles disabled",
+                         cfg.web.tiles_path)
+        # Built lazily in run_forever() -- constructing it here would bind
+        # cfg.web.port immediately, which tests that build an App without
+        # running it (e.g. test_main_supervision.py) don't want.
+        self._web_server: uvicorn.Server | None = None
 
         # Diagnosis-loop state.
         self._corr_last_t: float | None = None
@@ -318,6 +331,16 @@ class App:
         """Route-3 (GPCHC) listen port. Used by tests and Plan 3's UI."""
         return self._sol_collector.bound_port
 
+    def web_port(self) -> int | None:
+        """Bound port of the FastAPI/uvicorn web server, or None before it
+        has started listening (e.g. before run_forever, or mid-startup)."""
+        if self._web_server is None:
+            return None
+        try:
+            return self._web_server.servers[0].sockets[0].getsockname()[1]
+        except (IndexError, AttributeError):
+            return None
+
     # --- lifecycle ---------------------------------------------------------
     async def run_forever(self) -> None:
         await self.corr_reserver.start(self.cfg.reserve_corrections_port)
@@ -342,6 +365,10 @@ class App:
             supervised.append(("rtkrcv", self._rtkrcv_manager.run))
         if self._rtkrcv_sol_collector is not None:
             supervised.append((self._rtkrcv_sol_collector.name, self._rtkrcv_sol_collector.run))
+        self._web_server = uvicorn.Server(
+            uvicorn.Config(create_api(self), host="0.0.0.0", port=self.cfg.web.port,
+                           log_level="warning"))
+        supervised.append(("web", self._web_server.serve))
         tasks = [asyncio.create_task(self._supervise(name, factory))
                  for name, factory in supervised]
         tasks.append(asyncio.create_task(self._cleanup_loop()))
@@ -463,7 +490,14 @@ class App:
                 await coro_factory()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except (Exception, SystemExit):
+                # SystemExit is included because uvicorn.Server.serve() (the
+                # "web" route) calls sys.exit() itself on a bind failure
+                # (e.g. cfg.web.port already in use) instead of raising --
+                # left uncaught, that BaseException would unwind past this
+                # try/except and crash the whole App via gather(), which the
+                # spec's "collection never stops" principle forbids for a
+                # web-layer failure just as much as for a collector one.
                 _logger.exception("%s crashed; restarting in %.0fs", name,
                                    _SUPERVISE_RESTART_S)
                 try:
@@ -486,6 +520,8 @@ class App:
             await asyncio.sleep(_CLEANUP_INTERVAL_S)
 
     async def shutdown(self) -> None:
+        if self._web_server is not None:
+            self._web_server.should_exit = True
         for w in (self._corr_log, self._obs_log, self._sol_log, self._can_log):
             w.close()
         await self.corr_reserver.stop()
