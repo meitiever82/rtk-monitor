@@ -2,6 +2,8 @@ import asyncio
 import os
 import stat
 
+import pytest
+
 from rtk_monitor.solver.rtkrcv import RtkrcvManager
 
 
@@ -54,3 +56,29 @@ async def test_sol_port_in_env(tmp_path):
     except asyncio.CancelledError:
         pass
     assert out.read_text().strip() == "15021"
+
+
+async def test_no_orphaned_grandchildren_on_cancel(tmp_path):
+    """Verify that forking children (grandchildren) are killed on cancellation."""
+    pidfile = tmp_path / "grandchild.pid"
+    # Spawn a grandchild: 'sleep 30 & echo $! > pidfile; wait'
+    binary = _fake_binary(
+        tmp_path,
+        f'sleep 30 & echo $! > "{pidfile}"\nwait\n'
+    )
+    m = RtkrcvManager(binary, tmp_path, 15010, 15011, 15020, restart_delay=9)
+    task = asyncio.create_task(m.run())
+    # Wait for grandchild to be spawned and pidfile written
+    await asyncio.sleep(0.3)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # Brief delay to ensure process reaping completes
+    await asyncio.sleep(0.2)
+    # Verify grandchild PID is no longer alive
+    if pidfile.exists():
+        grandchild_pid = int(pidfile.read_text().strip())
+        with pytest.raises(ProcessLookupError):
+            os.kill(grandchild_pid, 0)  # signal 0 checks if process exists

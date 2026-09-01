@@ -8,10 +8,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 from pathlib import Path
 from typing import Callable
 
 _logger = logging.getLogger(__name__)
+
+
+def _signal_group(proc, sig):
+    """Signal a process group to ensure child and grandchild termination."""
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 _CONF_TEMPLATE = """\
 inpstr1-type =tcpcli
@@ -68,7 +77,8 @@ class RtkrcvManager:
                     self._binary, *self._extra, "-s", "-nc", "-o", str(conf),
                     cwd=self._run_dir, env=env,
                     stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL)
+                    stderr=asyncio.subprocess.DEVNULL,
+                    start_new_session=True)
                 if self._on_event:
                     self._on_event("rtkrcv", "connected", f"pid {proc.pid}")
                 rc = await proc.wait()
@@ -76,11 +86,12 @@ class RtkrcvManager:
                     self._on_event("rtkrcv", "disconnected", f"exit code {rc}")
             except asyncio.CancelledError:
                 if proc is not None and proc.returncode is None:
-                    proc.terminate()
+                    _signal_group(proc, signal.SIGTERM)
                     try:
                         await asyncio.wait_for(proc.wait(), 5.0)
                     except asyncio.TimeoutError:
-                        proc.kill()
+                        _signal_group(proc, signal.SIGKILL)
+                        await proc.wait()
                 raise
             except Exception:
                 _logger.exception("rtkrcv spawn failed")
