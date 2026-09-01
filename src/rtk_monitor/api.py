@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import html
+import logging
+import math
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
@@ -14,6 +16,32 @@ from rtk_monitor.replay import replay_messages
 from rtk_monitor.report import compute_report
 
 _WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+_logger = logging.getLogger(__name__)
+
+# {"cmd":"replay","t1":9e15} used to reach replay_messages unvalidated and
+# build one status entry per second over the whole [t0, t1] range -- billions
+# of entries, synchronously, on the event loop. Clamp the window itself
+# (independent of anything replay.py does) so a malicious/buggy client can
+# never request more than this much real time.
+_MAX_REPLAY_WINDOW_S = 48 * 3600.0
+
+
+def _validate_replay_cmd(cmd: dict) -> tuple[float, float, float] | None:
+    """Return a (t0, t1, speed) triple clamped to <=48h, or None if `cmd` is
+    not a well-formed replay command (missing/non-numeric t0/t1, NaN/inf,
+    t1<=t0, or a non-finite/non-positive speed)."""
+    try:
+        t0 = float(cmd["t0"])
+        t1 = float(cmd["t1"])
+        speed = float(cmd.get("speed", 1.0))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(t0) and math.isfinite(t1) and math.isfinite(speed)):
+        return None
+    if not (t1 > t0 and speed > 0):
+        return None
+    t0 = max(t0, t1 - _MAX_REPLAY_WINDOW_S)
+    return t0, t1, speed
 
 
 def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typed)
@@ -89,41 +117,75 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
         q = app.broadcaster.subscribe()
         replay_task: asyncio.Task | None = None
 
+        def _log_task_exception(t: asyncio.Task) -> None:
+            # WS task exceptions otherwise vanish silently: asyncio only
+            # reports an unretrieved exception via its default handler once
+            # the task is garbage-collected (if ever), and neither live()
+            # nor run_replay() is awaited by anything that would surface a
+            # failure. A done-callback observes it immediately instead.
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                _logger.error("ws task failed", exc_info=exc)
+
+        def _start_live() -> asyncio.Task:
+            t = asyncio.create_task(live())
+            t.add_done_callback(_log_task_exception)
+            return t
+
         async def live():
             while True:
                 await sock.send_json(await q.get())
 
-        async def run_replay(cmd):
-            # On normal completion (replay_end sent), fall back to live
+        async def run_replay(t0: float, t1: float, speed: float):
+            # On normal completion (replay_end sent) or an unexpected error
+            # (e.g. a DB read failing mid-replay), fall back to live
             # automatically -- an operator who started a replay and then
-            # walks away should not be left staring at a frozen view.
-            # Cancellation (an explicit {"cmd":"live"} mid-replay, or a
-            # disconnect) short-circuits this coroutine at its next await
-            # point, so the restart below only runs on natural completion.
+            # walks away (or hit a transient failure) should not be left
+            # staring at a frozen view. Cancellation (an explicit
+            # {"cmd":"live"} mid-replay, or a disconnect) must skip the
+            # restart below and re-raise instead: the {"cmd":"live"} handler
+            # already starts its own live_task synchronously, and restarting
+            # here too (e.g. unconditionally in a `finally`) would leave two
+            # tasks concurrently racing sock.send_json()/q.get() against each
+            # other over the same socket and queue.
             nonlocal live_task
-            async for m in replay_messages(app.epochs, app.events,
-                                           float(cmd["t0"]), float(cmd["t1"]),
-                                           float(cmd.get("speed", 1.0))):
-                await sock.send_json(m)
-            live_task = asyncio.create_task(live())
+            try:
+                async for m in replay_messages(app.epochs, app.events, t0, t1, speed):
+                    await sock.send_json(m)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _logger.exception("replay failed")
+                try:
+                    await sock.send_json({"type": "error", "detail": "replay failed"})
+                except Exception:
+                    _logger.exception("failed to send replay error to client")
+            live_task = _start_live()
 
-        live_task: asyncio.Task | None = asyncio.create_task(live())
+        live_task: asyncio.Task | None = _start_live()
         try:
             while True:
                 cmd = await sock.receive_json()
                 if cmd.get("cmd") == "replay":
+                    validated = _validate_replay_cmd(cmd)
+                    if validated is None:
+                        await sock.send_json({"type": "error", "detail": "invalid replay command"})
+                        continue
+                    t0, t1, speed = validated
                     if live_task is not None:
                         live_task.cancel()
                         live_task = None
                     if replay_task is not None:
                         replay_task.cancel()
-                    replay_task = asyncio.create_task(run_replay(cmd))
+                    replay_task = asyncio.create_task(run_replay(t0, t1, speed))
                 elif cmd.get("cmd") == "live":
                     if replay_task is not None:
                         replay_task.cancel()
                         replay_task = None
                     if live_task is None or live_task.done():
-                        live_task = asyncio.create_task(live())
+                        live_task = _start_live()
         except WebSocketDisconnect:
             pass
         finally:
