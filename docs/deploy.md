@@ -219,6 +219,10 @@ docker compose up -d --build
 - `/data:/data` — 挂载数据卷，存储日志、数据库、裸流
 - `restart: always` — 容器异常退出时自动重启
 - **注意**：SocketCAN 是网络命名空间接口，不需要 `/dev` 字符设备映射；`network_mode: host` 已覆盖
+- **重要**：`/data/config.yaml` 必须显式设置 `web.static_dir: /app/web`。容器内通过
+  `pip install .` 安装包后，源码不再与仓库 `web/` 目录相邻，`web.static_dir` 的默认空字符串
+  （仓库相对路径回退）在容器中无法解析静态文件目录，需显式指向 Dockerfile 中 `COPY web ./web`
+  落盘的 `/app/web`。
 
 ### 5.3 验证容器运行
 
