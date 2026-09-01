@@ -77,14 +77,23 @@ class TcpCollector:
     async def _run_server(self) -> None:
         async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
             self._active_writers.add(writer)
+            was_connected = False
             try:
+                self._on_event(self._name, "connected", "")
+                was_connected = True
                 try:
-                    await self._pump(reader)
+                    while True:
+                        try:
+                            data = await asyncio.wait_for(reader.read(4096), timeout=self._idle_timeout)
+                        except asyncio.TimeoutError:
+                            break
+                        if not data:
+                            break
+                        self._on_data(data, time.time())
                 except OSError:
                     pass
             finally:
-                if self._last_state != "disconnected":
-                    self._last_state = "disconnected"
+                if was_connected:
                     self._on_event(self._name, "disconnected", "peer closed")
                 writer.close()
                 self._active_writers.discard(writer)

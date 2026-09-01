@@ -14,7 +14,7 @@ OnEvent = Callable[[str, str, str], None]
 class CanCollector:
     def __init__(self, bus: can.BusABC, on_frame: OnFrame,
                  on_event: OnEvent | None = None, data_timeout: float = 2.0,
-                 bus_factory: (lambda: can.BusABC) | None = None, reopen_after: int = 5) -> None:
+                 bus_factory: Callable[[], can.BusABC] | None = None, reopen_after: int = 5) -> None:
         self._bus = bus
         self._on_frame = on_frame
         self._on_event = on_event
@@ -22,6 +22,7 @@ class CanCollector:
         self._bus_factory = bus_factory
         self._reopen_after = reopen_after
         self._seen_any = False
+        self._was_down = False
 
     def _emit(self, name: str, state: str, detail: str) -> None:
         if self._on_event is not None:
@@ -40,6 +41,7 @@ class CanCollector:
                 except asyncio.TimeoutError:
                     timeouts += 1
                     if timeouts == 1 and self._on_event:
+                        self._was_down = True
                         self._on_event("can_link", "disconnected",
                                        f"no frames for {self._data_timeout:.0f}s")
                     if (self._bus_factory is not None
@@ -54,10 +56,11 @@ class CanCollector:
                             self._on_event("can_link", "reopened", "bus reopened")
                         timeouts = 0
                     continue
-                if timeouts > 0 or not self._seen_any:
+                if self._was_down or not self._seen_any:
                     if self._on_event:
                         self._on_event("can_link", "connected", "")
                     self._seen_any = True
+                    self._was_down = False
                     timeouts = 0
                 self._on_frame(msg.arbitration_id, bytes(msg.data),
                                msg.timestamp or time.time())
