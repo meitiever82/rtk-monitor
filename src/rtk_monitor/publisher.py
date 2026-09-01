@@ -30,10 +30,9 @@ class UdpPublisher:
     def publish_fix(self, sol: RtkSolution, heading: float | None = None,
                     host_time: float | None = None) -> None:
         self._send({"type": "gnss_fix", "ver": 1, "gps_time": sol.t,
-                    "lat": sol.lat, "lon": sol.lon, "alt": sol.alt,
-                    "q": sol.q, "sigma_e": sol.sde, "sigma_n": sol.sdn,
-                    "sigma_u": sol.sdu, "heading": heading, "host_time": host_time,
-                    "source": "rtkrcv"})
+                    "host_time": host_time, "lat": sol.lat, "lon": sol.lon,
+                    "alt": sol.alt, "q": sol.q, "sigma_e": sol.sde, "sigma_n": sol.sdn,
+                    "sigma_u": sol.sdu, "heading": heading, "source": "rtkrcv"})
 
     def publish_event(self, kind: str, verdict: Verdict, t: float) -> None:
         self._send({"type": "gnss_event", "ver": 1, "gps_time": t,
