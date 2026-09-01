@@ -118,6 +118,23 @@ header#statusbar {
   font-variant-numeric: tabular-nums;
 }
 
+/* statusbar.js mounts <div class="statusbar"> inside header#statusbar; the
+   header supplies the chrome (background/border/padding), this class does
+   the actual flex layout of its .badge/.tag/.kv children. */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.kv {
+  color: var(--dim);
+}
+
+.kv b {
+  color: var(--ink);
+}
+
 /* ---------- main layout ---------- */
 
 main {
@@ -186,43 +203,71 @@ aside section {
 }
 
 /* ---------- event list rows ---------- */
+/* eventlist.js mounts <ul class="events"><li class="lv-*">, replacing the
+   #eventlist container's default block-list styling. */
 
-.event-row {
+.events {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.events li {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 6px 4px;
+  padding: 6px 8px;
   border-left: 3px solid var(--none);
   margin-bottom: 4px;
   background: var(--panel-2);
+  cursor: pointer;
 }
 
-.event-row.level-info {
+.events li:hover {
+  background: var(--panel);
+}
+
+.events li.lv-info {
   border-left-color: var(--info);
 }
 
-.event-row.level-warning {
-  border-left-color: var(--warning);
+.events li.lv-warning {
+  border-left-color: var(--float);
 }
 
-.event-row.level-serious {
+.events li.lv-serious {
   border-left-color: var(--serious);
 }
 
-.event-row.level-critical {
-  border-left-color: var(--critical);
+.events li.lv-critical {
+  border-left-color: var(--bad);
   background: rgba(224, 92, 79, 0.12);
 }
 
-.event-row .event-time {
+.events .et {
   color: var(--dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.event-row .event-msg {
+.events .ea {
+  white-space: nowrap;
+}
+
+.events .em {
   flex: 1 1 auto;
   word-break: break-word;
+}
+
+.events li.empty {
+  color: var(--dim);
+  cursor: default;
+  background: transparent;
+  border-left-color: transparent;
+}
+
+.events li.empty:hover {
+  background: transparent;
 }
 
 /* ---------- footer / timelines + replaybar ---------- */
@@ -245,11 +290,16 @@ footer {
 }
 
 #replaybar {
+  border-top: 1px solid var(--border);
+}
+
+/* replaybar.js mounts <div class="replaybar"> inside #replaybar; this class
+   does the actual flex layout of its label/select/button children. */
+.replaybar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 8px 16px;
-  border-top: 1px solid var(--border);
 }
 
 #replaybar button {
