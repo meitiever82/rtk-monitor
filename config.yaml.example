@@ -20,3 +20,14 @@ reserve:          # local re-serve ports for rtkrcv (Plan 2)
 
 retention_days: 14
 disk_watermark_pct: 85.0
+
+rtkrcv:           # independent RTK solver (empty binary = disabled)
+  binary: ""
+  sol_port: 15020
+
+diagnosis: {}     # thresholds; omit keys to use spec defaults
+
+publish:          # UDP JSON Lines output (GLIM phase-2 interface)
+  enabled: false
+  host: 127.0.0.1
+  port: 15030

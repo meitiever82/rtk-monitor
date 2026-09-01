@@ -24,3 +24,34 @@ def test_missing_key_raises(tmp_path):
         assert False, "should raise"
     except KeyError:
         pass
+
+def test_plan2_sections_defaults(tmp_path):
+    # A Plan-1-era config with no rtkrcv/diagnosis/publish sections must still load.
+    p = tmp_path / "old.yaml"
+    p.write_text(EXAMPLE.read_text())  # example will gain the sections; strip them
+    lines = p.read_text().splitlines()
+    # Strip Plan 2 sections by skipping lines that start with their section names
+    # or belong to them (indented children)
+    in_plan2_section = False
+    text_lines = []
+    for line in lines:
+        if line.startswith(("rtkrcv", "diagnosis", "publish")):
+            in_plan2_section = True
+        elif line and not line[0].isspace():
+            # Top-level key (not indented) - exit Plan 2 section
+            in_plan2_section = False
+            text_lines.append(line)
+        elif not in_plan2_section:
+            text_lines.append(line)
+    text = "\n".join(text_lines)
+    p.write_text(text)
+    cfg = load_config(p)
+    assert cfg.rtkrcv.binary == "" and cfg.rtkrcv.sol_port == 15020
+    assert cfg.diagnosis.corr_gap_s == 3.0 and cfg.diagnosis.min_sats == 6
+    assert cfg.diagnosis.close_hysteresis_s == 10.0
+    assert cfg.publish.enabled is False and cfg.publish.port == 15030
+
+def test_plan2_sections_explicit():
+    cfg = load_config(EXAMPLE)
+    assert cfg.rtkrcv.sol_port == 15020          # example carries the sections
+    assert cfg.publish.host == "127.0.0.1"
