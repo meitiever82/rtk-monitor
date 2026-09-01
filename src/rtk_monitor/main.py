@@ -367,7 +367,12 @@ class App:
         v = diagnose(inp, self.cfg.diagnosis)
         lat = sol.lat if sol else (can_e.lat if can_e else None)
         lon = sol.lon if sol else (can_e.lon if can_e else None)
-        self.event_machine.update(now, v, lat, lon)
+        metrics = {
+            "divergence_m": div_m or 0.0,
+            "sats": float(sol.ns) if sol else 0.0,
+            "corr_gap_s": now - self._corr_last_t if self._corr_last_t else 0.0
+        }
+        self.event_machine.update(now, v, lat, lon, metrics=metrics)
 
     async def _supervise(self, name: str, coro_factory: Callable[[], Coroutine]) -> None:
         """Run coro_factory() forever, restarting it on any non-cancellation

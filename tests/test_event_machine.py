@@ -90,3 +90,17 @@ def test_close_callback_exception_safety(tmp_path):
     assert len(rows) == 2
     assert rows[0].state == "closed" and rows[0].code == "corr_outage"
     assert rows[1].state == "open" and rows[1].code == "corr_outage"
+
+
+def test_peak_metrics_accumulate_and_persist(tmp_path):
+    store = EventStore(tmp_path / "e.db")
+    m = EventMachine(store, close_hysteresis_s=1.0)
+    m.update(100.0, OUT, lat=44.0, lon=90.0, metrics={"corr_gap_s": 5.0})
+    m.update(101.0, OUT, lat=44.1, lon=90.1, metrics={"corr_gap_s": 12.0})
+    m.update(102.0, OK, metrics={"corr_gap_s": 0.0})
+    m.update(104.0, OK)
+    row = store.query()[0]
+    import json
+    assert row.state == "closed"
+    assert json.loads(row.peak)["corr_gap_s"] == 12.0
+    assert row.lat_close == 44.1 and row.lon_close == 90.1

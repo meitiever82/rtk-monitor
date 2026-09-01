@@ -15,7 +15,8 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_t ON events(t);"""
 
 _EXTRA_COLS = (("level", "TEXT"), ("code", "TEXT"), ("t_close", "REAL"),
-               ("lat", "REAL"), ("lon", "REAL"))
+               ("lat", "REAL"), ("lon", "REAL"),
+               ("lat_close", "REAL"), ("lon_close", "REAL"), ("peak", "TEXT"))
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,9 @@ class EventRow:
     t_close: float | None = None
     lat: float | None = None
     lon: float | None = None
+    lat_close: float | None = None
+    lon_close: float | None = None
+    peak: str | None = None
 
 
 class EventStore:
@@ -60,14 +64,16 @@ class EventStore:
 
     def query(self, since: float = 0.0) -> list[EventRow]:
         rows = self._db.execute(
-            "SELECT id, t, etype, state, detail, level, code, t_close, lat, lon"
+            "SELECT id, t, etype, state, detail, level, code, t_close, lat, lon, lat_close, lon_close, peak"
             " FROM events WHERE t >= ? ORDER BY t",
             (since,)).fetchall()
         return [EventRow(*r) for r in rows]
 
-    def close_event(self, event_id: int, t_close: float) -> None:
-        self._db.execute("UPDATE events SET state='closed', t_close=? WHERE id=?",
-                         (t_close, event_id))
+    def close_event(self, event_id: int, t_close: float, lat: float | None = None,
+                    lon: float | None = None, peak: str | None = None) -> None:
+        self._db.execute(
+            "UPDATE events SET state='closed', t_close=?, lat_close=?, lon_close=?, peak=?"
+            " WHERE id=?", (t_close, lat, lon, peak, event_id))
         self._db.commit()
 
     def prune(self, before_t: float) -> int:

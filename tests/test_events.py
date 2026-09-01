@@ -52,3 +52,11 @@ def test_prune_keeps_open_events(tmp_path):
     s.close_event(rid, 110.0)
     assert s.prune(before_t=200.0) == 1          # only the closed one
     assert [r.state for r in s.query()] == ["open"]
+
+
+def test_close_event_with_position_and_peak(tmp_path):
+    s = EventStore(tmp_path / "e.db")
+    rid = s.record(100.0, "diagnosis", "open", "x", code="corr_outage")
+    s.close_event(rid, 130.0, lat=44.5, lon=90.2, peak='{"corr_gap_s": 12.0}')
+    row = s.query()[0]
+    assert row.lat_close == 44.5 and '"corr_gap_s"' in row.peak
