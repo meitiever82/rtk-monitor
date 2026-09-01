@@ -190,6 +190,19 @@ def test_diagnosis_transition_broadcasts_top_level_t(tmp_path):
     app.events.close()
 
 
+def test_status_corr_fields_are_none_when_unset(tmp_path):
+    """I4: corr.last_t/base_offset_m must surface as null (never received)
+    when unset, not be coerced to 0.0 -- 0.0 is a legitimate offset/timestamp
+    value, so the coercion made "never received" indistinguishable from it.
+    This mirrors replay.py's status.corr contract, which is already null."""
+    app = build_app(_minimal_cfg(tmp_path))
+    app._diagnosis_tick()
+    assert app.last_status["corr"]["last_t"] is None
+    assert app.last_status["corr"]["base_offset_m"] is None
+    app._bus.shutdown()
+    app.events.close()
+
+
 def test_div_since_cleared_when_inputs_vanish(tmp_path):
     """Item 7: if divergence was held and the CAN/sol pairing drops out (no
     fresh inputs to compare), the stale _div_since timer must not survive to

@@ -39,6 +39,30 @@ def test_status_events_epochs(tmp_path):
     assert eps[0]["lat"] == 44.5
 
 
+def test_epochs_endpoint_returns_newest_limit_ordered_ascending(tmp_path):
+    """I5: full materialization + Python [-limit:] slicing replaced by
+    EpochStore.query_last; the endpoint must return exactly `limit` newest
+    rows, oldest-first."""
+    c, fake = _client(tmp_path)
+    for i in range(20):
+        fake.epochs.add(Epoch(t=float(i), src="can", lat=float(i)))
+    eps = c.get("/api/epochs", params={"src": "can", "t0": 0, "t1": 100, "limit": 5}).json()
+    assert [e["t"] for e in eps] == [15.0, 16.0, 17.0, 18.0, 19.0]
+
+
+def test_epochs_endpoint_clamps_limit_to_1_50000(tmp_path):
+    c, fake = _client(tmp_path)
+    for i in range(5):
+        fake.epochs.add(Epoch(t=float(i), src="can"))
+    # limit=0 clamps up to 1
+    eps = c.get("/api/epochs", params={"src": "can", "t0": 0, "t1": 100, "limit": 0}).json()
+    assert len(eps) == 1 and eps[0]["t"] == 4.0
+    # limit far above 50000 clamps down (only 5 rows exist, so this just
+    # confirms the request doesn't error and still returns everything)
+    eps2 = c.get("/api/epochs", params={"src": "can", "t0": 0, "t1": 100, "limit": 999999}).json()
+    assert len(eps2) == 5
+
+
 def test_base_reset_needs_history(tmp_path):
     c, fake = _client(tmp_path)
     assert c.post("/api/base_reset").status_code == 409

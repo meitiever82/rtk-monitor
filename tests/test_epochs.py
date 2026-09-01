@@ -46,6 +46,28 @@ def test_prune_removes_old_rows(tmp_path):
     assert s.latest("can").t == 200.0 and len(s.base_history()) == 1
 
 
+def test_query_last_returns_newest_n_ordered_ascending(tmp_path):
+    """I5: /api/epochs used to materialize the full range and slice
+    [-limit:] in Python -- query_last pushes the "newest N" selection into
+    SQL (ORDER BY t DESC LIMIT ?) and reverses just that bounded result."""
+    s = EpochStore(tmp_path / "e.db")
+    for i in range(10):
+        s.add(Epoch(t=float(i), src="can", lat=float(i)))
+    rows = s.query_last("can", 0.0, 100.0, 3)
+    assert [r.t for r in rows] == [7.0, 8.0, 9.0]
+    assert [r.lat for r in rows] == [7.0, 8.0, 9.0]
+    s.close()
+
+
+def test_query_last_respects_time_bounds(tmp_path):
+    s = EpochStore(tmp_path / "e.db")
+    for i in range(10):
+        s.add(Epoch(t=float(i), src="can"))
+    rows = s.query_last("can", 2.0, 5.0, 100)
+    assert [r.t for r in rows] == [2.0, 3.0, 4.0, 5.0]
+    s.close()
+
+
 def test_wal_mode(tmp_path):
     s = EpochStore(tmp_path / "e.db")
     assert s._db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"

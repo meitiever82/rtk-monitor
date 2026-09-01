@@ -63,7 +63,11 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
 
     @api.get("/api/epochs")
     async def epochs(src: str, t0: float, t1: float, limit: int = 3600):
-        return [dataclasses.asdict(e) for e in app.epochs.query(src, t0, t1)[-limit:]]
+        # query(...)[-limit:] used to materialize the full [t0, t1] range in
+        # Python just to discard everything but the tail; query_last pushes
+        # the "newest N" selection into SQL instead.
+        clamped_limit = max(1, min(limit, 50000))
+        return [dataclasses.asdict(e) for e in app.epochs.query_last(src, t0, t1, clamped_limit)]
 
     @api.get("/api/base_history")
     async def base_history():

@@ -85,6 +85,18 @@ class EpochStore:
             (src, t0, t1)).fetchall()
         return [self._row_to_epoch(r) for r in rows]
 
+    def query_last(self, src: str, t0: float, t1: float, limit: int) -> list[Epoch]:
+        """Newest `limit` rows in [t0, t1], oldest-first. Pushes the "give me
+        the newest N" selection into SQL (ORDER BY t DESC LIMIT ?) instead of
+        a caller running the unbounded `query()` and slicing [-limit:] in
+        Python, which materializes every row in the range just to discard
+        all but the tail."""
+        rows = self._db.execute(
+            f"SELECT {','.join(_COLS)} FROM epochs WHERE src=? AND t>=? AND t<=?"
+            " ORDER BY t DESC LIMIT ?",
+            (src, t0, t1, limit)).fetchall()
+        return [self._row_to_epoch(r) for r in reversed(rows)]
+
     def kv_get(self, k: str) -> str | None:
         row = self._db.execute("SELECT v FROM kv WHERE k=?", (k,)).fetchone()
         return row[0] if row else None

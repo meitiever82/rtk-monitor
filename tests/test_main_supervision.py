@@ -127,6 +127,34 @@ async def test_supervisor_restarts_crashed_collector(monkeypatch, tmp_path):
     app.events.close()
 
 
+async def test_supervisor_sleeps_after_clean_return(monkeypatch, tmp_path):
+    """I6: _supervise only slept on exception -- a coroutine that returns
+    cleanly (e.g. uvicorn's serve() after should_exit) respun instantly,
+    hot-looping the supervisor. A clean return must also incur the restart
+    delay."""
+    monkeypatch.setattr(main_mod, "_SUPERVISE_RESTART_S", 0.05)
+    app = _build_app(tmp_path)
+    attempts: list[int] = []
+
+    async def clean_return():
+        attempts.append(1)
+        return
+
+    task = asyncio.create_task(app._supervise("clean", clean_return))
+    # With a 0.05s restart delay: call1 at t=0, call2 at t~0.05, then a sleep
+    # still pending at t=0.08 -- an unthrottled hot loop would instead have
+    # racked up hundreds of calls in this window.
+    await asyncio.sleep(0.08)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert len(attempts) <= 2, "supervisor must sleep between clean-return respins, not hot-loop"
+    app._bus.shutdown()
+    app.events.close()
+
+
 async def test_socketcan_branch_wires_bus_factory(monkeypatch, tmp_path):
     """T11 built CanCollector's reopen watchdog, but App only ever passed a
     bus_factory=None -- dead code in production. The real (non-virtual)

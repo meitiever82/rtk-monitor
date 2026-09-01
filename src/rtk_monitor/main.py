@@ -459,7 +459,6 @@ class App:
             can_dict = asdict(can_e) if can_e is not None else None
             gpchc_e = self.epochs.latest("gpchc")
             gpchc_dict = asdict(gpchc_e) if gpchc_e is not None else None
-            corr_last_t = self._corr_last_t if self._corr_last_t is not None else 0.0
             status_msg = {
                 "type": "status",
                 "t": now,
@@ -472,8 +471,11 @@ class App:
                 "can": can_dict,
                 "gpchc": gpchc_dict,
                 "corr": {
-                    "last_t": corr_last_t,
-                    "base_offset_m": self._base_offset if self._base_offset is not None else 0.0
+                    # null means "never received" -- 0.0 is a legitimate
+                    # offset/timestamp value and must stay distinguishable
+                    # from it (matches replay.py's status.corr contract).
+                    "last_t": self._corr_last_t,
+                    "base_offset_m": self._base_offset
                 }
             }
             self.last_status = status_msg
@@ -509,6 +511,15 @@ class App:
                 except Exception:
                     _logger.exception("failed to record crash event for %s", name)
                 await asyncio.sleep(_SUPERVISE_RESTART_S)
+                continue
+            # coro_factory() returned cleanly (no exception) -- e.g. uvicorn's
+            # serve() after should_exit is set. Without a delay here the
+            # while loop respins with no await point in between, hot-looping
+            # this task and starving the event loop for every other route.
+            # The same restart delay as the crash path applies.
+            _logger.warning("%s returned; restarting in %.0fs", name,
+                             _SUPERVISE_RESTART_S)
+            await asyncio.sleep(_SUPERVISE_RESTART_S)
 
     async def _cleanup_loop(self) -> None:
         while True:
