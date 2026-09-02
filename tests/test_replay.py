@@ -289,6 +289,24 @@ async def test_replay_sol_key_set_matches_realtime_contract(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_every_replay_message_is_tagged(tmp_path):
+    """Every replay message carries replay=True so the client can drop replay
+    residue still in flight after the user returns to live."""
+    ep = EpochStore(tmp_path / "e.db")
+    ev = EventStore(tmp_path / "e.db")
+    ep.add(Epoch(t=100.5, src="can", q=4, lat=44.5, lon=90.2, heading=170.0, speed=5.0))
+    ep.add(Epoch(t=100.5, src="rtkrcv", q=1, sats=30, lat=44.5, lon=90.2))
+
+    async def nosleep(_):
+        pass
+
+    msgs = await _collect(replay_messages(ep, ev, 100.0, 101.0, sleep=nosleep))
+    assert msgs and all(m.get("replay") is True for m in msgs)
+    assert any(m["type"] == "position" for m in msgs)
+    assert msgs[-1]["type"] == "replay_end" and msgs[-1]["replay"] is True
+
+
+@pytest.mark.asyncio
 async def test_replay_status_carries_forward_epoch_before_t0(tmp_path):
     """A single can epoch written before t0 must still be visible in the
     first status snapshot (carry-forward), but must NOT produce a position

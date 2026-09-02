@@ -19,6 +19,7 @@
 {
   "type": "status",
   "t": <float, unix time>,
+  "replay": <bool>,
   "verdict": {"level": str, "code": str, "message": str},
   "sol": <sol dict 或 null>,
   "can": <epoch dict 或 null>,
@@ -27,12 +28,14 @@
 }
 ```
 
-- `sol`（非 null 时）固定 11 个 key：
-  `t, q, sats, age, ratio, lat, lon, alt, sdn, sde, sdu`。
+- `sol`（非 null 时）固定 12 个 key：
+  `t, q, sats, age, ratio, lat, lon, alt, sdn, sde, sdu, sats_json`。
   这是 realtime（`_diagnosis_tick` 里手写的 `sol_dict`）与 replay
   （`replay.py` 里同样手写、注释里明确指出"不是完整 Epoch asdict"）共享的
   精确契约 —— 用 rtkrcv 的解算结果，而不是把整条 epoch 表结构（会带上
-  `src`/`heading`/`speed`/`sats_json` 等实时侧从不使用的字段）泄漏出去。
+  `src`/`heading`/`speed` 等实时侧从不使用的字段）泄漏出去。`sats_json` 是
+  每颗卫星的天空图数据（`[{sat,az,el,snr,used}, …]` 的 JSON 串，来自 rtkrcv
+  `-r 2` 的 `$SAT` 状态流；无数据时为 `"[]"` 或 null），天空图组件读它绘制。
 - `can`/`gpchc`（非 null 时）是完整的 `Epoch` dataclass（`dataclasses.asdict`），
   两侧代码路径都是这样构造的，key 集合天然一致。
 
@@ -60,6 +63,7 @@
 {
   "type": "position",
   "t": <float>,
+  "replay": <bool>,
   "src": "can" | "gpchc",
   "lat": <float>, "lon": <float>,
   "heading": <float 或 null>,
@@ -84,6 +88,7 @@
 {
   "type": "event",
   "t": <float>,
+  "replay": <bool>,
   "action": "open" | "close",
   "event": {"t": <float>, "level": str, "code": str, "message": str}
 }
@@ -132,7 +137,22 @@ Plan 3a 最终修复波次新增。两个来源：
 "偏移恰好为 0"；现在实时与回放两侧都用 `null` 表达"从未收到"，`0.0` 只在真
 实收到过一次偏移为 0 的基站坐标时出现。
 
-## 7. 安全姿态（现状说明，非本次变更范围）
+## 7. `replay` 标记（跨消息统一约定）
+
+`status` / `position` / `event` 三类消息都带一个布尔 `replay` 字段：实时侧恒
+为 `false`（`main.py` 三处 `broadcaster.publish`），回放侧恒为 `true`
+（`replay.py::replay_messages` 统一包装,`replay_end` 也带）。这不破坏"实时与
+回放同构"——键集仍一致,只是取值不同(与 `verdict`/`corr` 同理)。
+
+它解决的问题:服务端回放是**逐条推送**的,客户端点"回到实时"(`{"cmd":"live"}`
++ `store.resumeLive()`)时,已有若干在途回放消息在缓冲/网络里,清空轨迹后才
+到达,会在地图上残留几个点、连成一条到实时位置的直线。客户端据此在
+`store.applyMessage` 里丢弃"已回到实时后仍到达的回放消息":
+`if (m.replay && !s.replaying) return;`。回放模式下 `s.replaying` 为 `true`,
+回放消息正常接收;`replay_end` 到达时 `s.replaying` 仍为 `true`(由该消息的
+处理器置 `false`),不会被误丢。
+
+## 8. 安全姿态（现状说明，非本次变更范围）
 
 `/ws`、`/api/*`、`/report`、`/tiles/*` 均无鉴权，`web.host` 目前固定绑定
 `0.0.0.0`（`main.py::run_forever`）。`POST /api/base_reset` 无需任何凭证即可

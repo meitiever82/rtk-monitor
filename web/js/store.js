@@ -40,6 +40,12 @@ export function createStore(Vue) {
   }
 
   s.applyMessage = (m) => {
+    // Discard replay messages that arrive after the user has returned to live
+    // (the server streams replay one message at a time, so a few are still in
+    // flight when "回到实时" fires). Without this they append to the freshly
+    // cleared trail and draw a straight line to the live position. Replay-mode
+    // messages are accepted normally because s.replaying is still true then.
+    if (m.replay && !s.replaying) return;
     if (m.type === "status") {
       s.status = m;
       if (m.sol) pushTrail("rtkrcv", m.sol.lat, m.sol.lon, m.sol.q);

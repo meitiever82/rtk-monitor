@@ -27,8 +27,18 @@ async def replay_messages(epochs: EpochStore, events: EventStore, t0: float, t1:
     For each event open/close action within [t0, t1] -> event message.
     Ends with replay_end message.
 
+    Every message carries replay=True so the client can discard replay
+    messages still in flight after the user has returned to live (otherwise a
+    few late replay points draw a straight line to the live position).
+
     sleep can be injected for testing (e.g., async def nosleep(_): pass).
     """
+    async for m in _replay_messages(epochs, events, t0, t1, speed=speed, sleep=sleep):
+        yield {**m, "replay": True}
+
+
+async def _replay_messages(epochs: EpochStore, events: EventStore, t0: float, t1: float,
+                           speed: float = 1.0, sleep=asyncio.sleep):
     # Rows used for snapshot carry-forward (status.sol/can/gpchc) reach back
     # _SNAPSHOT_LOOKBACK_S before t0 so a status message near t0 can still
     # reflect an epoch written just before the window opened.

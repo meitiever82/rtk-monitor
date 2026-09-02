@@ -303,7 +303,8 @@ class App:
                             "lon": cyc.lon,
                             "heading": cyc.heading,
                             "q": cyc.sat_status,
-                            "speed": cyc.vel[3]
+                            "speed": cyc.vel[3],
+                            "replay": False   # live; replay.py sets True
                         })
                     except Exception:
                         _logger.exception("position broadcast failed")
@@ -328,6 +329,7 @@ class App:
                 "type": "event",
                 "t": t,
                 "action": kind,
+                "replay": False,   # live; replay.py sets True
                 "event": {
                     "t": t,
                     "level": verdict.level,
@@ -520,6 +522,7 @@ class App:
             status_msg = {
                 "type": "status",
                 "t": now,
+                "replay": False,   # live; replay.py sets True
                 "verdict": {
                     "level": v.level,
                     "code": v.code,
