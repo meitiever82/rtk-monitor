@@ -46,6 +46,14 @@ rnx2rtkp -p 2 -m 10 -o pp.pos  SITEB…_MO.rnx SITEA…_MO.rnx BRDC…_MN.rnx
 
 ### 3. 起时间同步喂给器 + app
 
+一键（推荐）——`DATA` 是含 `base.rtcm3`/`rover.rtcm3` 的目录：
+
+```bash
+tools/run_replay.sh DATA 25          # 停旧进程 → 起喂给器 → 起 app（web :8083）
+```
+
+或手动分开：
+
 ```bash
 # 喂给器：base→6201, rover→6202，30x 加速（一小时 ~2 分钟）
 python tools/rtkfeed_timed.py base.rtcm3 6201 rover.rtcm3 6202 30 &
