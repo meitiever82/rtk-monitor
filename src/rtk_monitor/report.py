@@ -47,12 +47,30 @@ def compute_report(epochs: EpochStore, events: EventStore, t0: float, t1: float,
             continue
         evs.append({"code": r.code, "level": r.level, "t": r.t, "t_close": r.t_close,
                     "duration_s": (r.t_close - r.t) if r.t_close is not None else None,
-                    "message": r.detail})
+                    "message": r.detail, "lat": r.lat, "lon": r.lon})
     hist = [h for h in epochs.base_history() if t0 <= h[0] <= t1]
     base_max = None
+    base_series = []
     if hist:
         x0, y0, z0 = hist[0][1:]
-        base_max = max(math.dist((x0, y0, z0), h[1:]) for h in hist)
+        base_series = [{"t": h[0], "offset_m": math.dist((x0, y0, z0), h[1:])} for h in hist]
+        base_max = max(s["offset_m"] for s in base_series)
+
+    # 610-fused (can) vs independent (rtkrcv) horizontal deviation, matched by
+    # whole second (spec §6). One epoch per source per second is kept; seconds
+    # present in both sources contribute a deviation sample.
+    def _by_sec(rows):
+        out = {}
+        for e in rows:
+            if e.lat is not None:
+                out.setdefault(int(e.t), e)
+        return out
+    rtk_sec, can_sec = _by_sec(rtk), _by_sec(can)
+    devs = [_horiz_m(rtk_sec[s].lat, rtk_sec[s].lon, can_sec[s].lat, can_sec[s].lon)
+            for s in rtk_sec.keys() & can_sec.keys()]
+    can_rtk_dev = {"n": len(devs),
+                   "max_m": max(devs) if devs else None,
+                   "mean_m": (sum(devs) / len(devs)) if devs else None}
 
     # Absolute-baseline verification (§6 必含项): for each rtkrcv epoch that was
     # at (within abs_ref_radius_m of) a surveyed control point, the deviation
@@ -70,6 +88,7 @@ def compute_report(epochs: EpochStore, events: EventStore, t0: float, t1: float,
 
     return {"fix_ratio": _fix_ratio(main_rows, fixed_q), "hourly": hourly,
             "events": sorted(evs, key=lambda e: e["t"]),
-            "base_max_offset_m": base_max,
+            "base_max_offset_m": base_max, "base_series": base_series,
             "abs_ref": abs_ref, "abs_ref_max_m": abs_ref_max,
+            "can_rtk_dev": can_rtk_dev,
             "epoch_counts": {"rtkrcv": len(rtk), "can": len(can), "gpchc": len(gpchc)}}

@@ -61,6 +61,14 @@ export class MapView {
       rtkrcv: L.layerGroup().addTo(this.map),
       gpchc: L.layerGroup().addTo(this.map),
     };
+    // Independent show/hide per trajectory (§5): a Leaflet overlay control
+    // toggles each trail's layerGroup on/off. render() keeps drawing into the
+    // groups regardless; hidden groups just aren't on the map.
+    L.control.layers(null, {
+      "610 融合": this.groups.can,
+      "APP 自解": this.groups.rtkrcv,
+      "610 卫导": this.groups.gpchc,
+    }, { collapsed: false }).addTo(this.map);
     this.marker = null;
     this.sigma = null;
     this._centered = false;

@@ -29,6 +29,40 @@ def test_report_abs_ref_empty_without_control_points(tmp_path):
     assert r["abs_ref"] == [] and r["abs_ref_max_m"] is None
 
 
+def test_report_can_rtk_deviation(tmp_path):
+    """§6: 610-fused vs independent-solution deviation, matched per second."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    base = 1000.0
+    ep.add(Epoch(t=base + 1.0, src="rtkrcv", q=1, lat=44.5, lon=90.28))
+    ep.add(Epoch(t=base + 1.2, src="can", q=4, lat=44.5 + 1.0 * _DEG_PER_M, lon=90.28))  # ~1 m
+    ep.add(Epoch(t=base + 2.0, src="rtkrcv", q=1, lat=44.5, lon=90.28))                  # no can pair
+    r = compute_report(ep, ev, base, base + 10)
+    assert r["can_rtk_dev"]["n"] == 1
+    assert abs(r["can_rtk_dev"]["max_m"] - 1.0) < 0.1
+
+
+def test_report_base_series_curve(tmp_path):
+    """§6: base-station stability as a series (offset from first sample), not
+    just a scalar max."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    base = 1000.0
+    ep.add_base(base, -2148744.0, 4426641.0, 4044655.0)
+    ep.add_base(base + 10, -2148744.3, 4426641.0, 4044655.0)   # +0.3 m
+    r = compute_report(ep, ev, base, base + 100)
+    assert len(r["base_series"]) == 2
+    assert r["base_series"][0]["offset_m"] == 0.0
+    assert abs(r["base_series"][1]["offset_m"] - 0.3) < 1e-6
+
+
+def test_report_events_carry_location(tmp_path):
+    """§6 problem-segment annotation: events expose their lat/lon."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    ev.record(1001.0, "diagnosis", "open", "遮挡", level="serious", code="low_sats",
+              lat=44.5, lon=90.28)
+    r = compute_report(ep, ev, 1000.0, 1100.0)
+    assert r["events"][0]["lat"] == 44.5 and r["events"][0]["lon"] == 90.28
+
+
 def test_report_stats(tmp_path):
     ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
     base = 3600.0 * 100

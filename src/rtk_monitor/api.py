@@ -106,10 +106,20 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
         rows = "".join(
             f"<tr><td>{html.escape(str(h['hour']))}</td><td>{h['epochs']}</td><td>{pct(h['fix_ratio'])}</td></tr>"
             for h in r["hourly"])
+        def loc(e):
+            return "-" if e.get("lat") is None else f"{e['lat']:.6f}, {e['lon']:.6f}"
         evs = "".join(f"<tr><td>{html.escape(e['code'] or '')}</td><td>{html.escape(e['level'] or '')}</td>"
                       f"<td>{'-' if e['duration_s'] is None else e['duration_s']}</td>"
+                      f"<td>{loc(e)}</td>"
                       f"<td>{html.escape(e['message'] or '')}</td></tr>"
                       for e in r["events"])
+        dev = r["can_rtk_dev"]
+        dev_s = ("无配对样本" if dev["n"] == 0
+                 else f"最大 {dev['max_m']:.3f} m　均值 {dev['mean_m']:.3f} m　样本 {dev['n']}")
+        bs_rows = "".join(
+            f"<tr><td>{s['t']:.0f}</td><td>{s['offset_m']:.3f}</td></tr>" for s in r["base_series"])
+        bs_table = (f"<table border=1 cellpadding=4><tr><th>时间(unix)</th><th>偏移(m)</th></tr>{bs_rows}</table>"
+                    if bs_rows else "")
         fr = "-" if r["fix_ratio"] is None else f"{r['fix_ratio']:.1%}"
         ar_max, ar_thr = r["abs_ref_max_m"], app.cfg.diagnosis.abs_ref_max_m
         ar_status = ("未布设控制点或无经过" if ar_max is None
@@ -122,10 +132,12 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
                     if ar_rows else "")
         ar_max_s = "-" if ar_max is None else f"{ar_max:.3f} m"
         return f"""<html><meta charset="utf-8"><body style="font-family:sans-serif;max-width:800px;margin:2em auto">
-<h1>RTK 定位报告</h1><p>固定解可用率：<b>{fr}</b>　基站最大偏移：{r['base_max_offset_m'] or '-'} m</p>
+<h1>RTK 定位报告</h1><p>固定解可用率：<b>{fr}</b></p>
 <h2>分小时统计</h2><table border=1 cellpadding=4><tr><th>小时</th><th>历元数</th><th>固定率</th></tr>{rows}</table>
 <h2>绝对基准校验（控制点比对）</h2><p>最大偏差：<b>{ar_max_s}</b>　状态：{ar_status}</p>{ar_table}
-<h2>事件（{len(r['events'])}）</h2><table border=1 cellpadding=4><tr><th>类型</th><th>级别</th><th>时长(s)</th><th>结论</th></tr>{evs}</table>
+<h2>610 与独立解偏差</h2><p>{dev_s}</p>
+<h2>基站坐标稳定性</h2><p>最大偏移：<b>{r['base_max_offset_m'] or '-'} m</b></p>{bs_table}
+<h2>事件（{len(r['events'])}）　含问题路段位置</h2><table border=1 cellpadding=4><tr><th>类型</th><th>级别</th><th>时长(s)</th><th>位置(纬,经)</th><th>结论</th></tr>{evs}</table>
 </body></html>"""
 
     @api.get("/api/tiles_info")
