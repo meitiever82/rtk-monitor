@@ -78,3 +78,10 @@ __pycache__/
 # Third-party dependencies and build outputs
 third_party/
 tools/bin/
+
+# Runtime data & rtkrcv artifacts (app-generated, never committed)
+data/
+rtkrcv.nav
+rtkrcv_*.trace
+rtkrcv_*.stat
+*.trace
