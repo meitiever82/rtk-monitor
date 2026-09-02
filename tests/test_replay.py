@@ -263,14 +263,16 @@ async def test_replay_close_message_for_event_opened_before_window(tmp_path):
 
 @pytest.mark.asyncio
 async def test_replay_sol_key_set_matches_realtime_contract(tmp_path):
-    """status.sol must be exactly the 11-key set the realtime WS contract
-    uses for sol (main.py's _diagnosis_tick sol_dict) -- not a full Epoch
-    asdict, which would leak src/heading/speed/sats_json."""
+    """status.sol must be exactly the 12-key set the realtime WS contract
+    uses for sol (main.py's _diagnosis_tick sol_dict): the 11 solution fields
+    plus sats_json -- not a full Epoch asdict, which would leak src/heading/
+    speed. sats_json must round-trip so the replay skyplot renders like live."""
     ep = EpochStore(tmp_path / "e.db")
     ev = EventStore(tmp_path / "e.db")
+    sats_json = '[{"sat": "G05", "az": 310.8, "el": 26.2, "snr": 45.0, "used": true}]'
     ep.add(Epoch(t=100.5, src="rtkrcv", q=1, sats=38, age=1.2, ratio=20.0,
                  lat=44.6, lon=90.3, alt=600.0, sdn=0.01, sde=0.02, sdu=0.03,
-                 heading=170.0, speed=5.0))
+                 heading=170.0, speed=5.0, sats_json=sats_json))
 
     async def nosleep(_):
         pass
@@ -280,8 +282,10 @@ async def test_replay_sol_key_set_matches_realtime_contract(tmp_path):
 
     assert st["sol"] is not None
     assert set(st["sol"].keys()) == {
-        "t", "q", "sats", "age", "ratio", "lat", "lon", "alt", "sdn", "sde", "sdu"}
+        "t", "q", "sats", "age", "ratio", "lat", "lon", "alt", "sdn", "sde", "sdu",
+        "sats_json"}
     assert st["sol"]["q"] == 1 and st["sol"]["sats"] == 38
+    assert st["sol"]["sats_json"] == sats_json      # skyplot data survives replay
 
 
 @pytest.mark.asyncio

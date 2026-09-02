@@ -31,7 +31,7 @@ from rtk_monitor.parsers.cgi610_can import Cgi610Assembler
 from rtk_monitor.parsers.gpchc import LineFramer, parse_gpchc
 from rtk_monitor.parsers.rtcm import RtcmFramer, parse_1005
 from rtk_monitor.parsers.rtksol import parse_llh_solution
-from rtk_monitor.parsers.rtkstat import SatStat, SlipWindow, parse_sat_line
+from rtk_monitor.parsers.rtkstat import SatStat, SlipWindow, StatEpochAccumulator
 from rtk_monitor.publisher import UdpPublisher
 from rtk_monitor.solver.rtkrcv import RtkrcvManager
 from rtk_monitor.storage.canlog import CandumpWriter
@@ -250,7 +250,10 @@ class App:
                         self.epochs.add(Epoch(
                             t=t, src="rtkrcv", q=sol.q, sats=sol.ns, age=sol.age,
                             lat=sol.lat, lon=sol.lon, alt=sol.alt,
-                            sde=sol.sde, sdn=sol.sdn, sdu=sol.sdu, ratio=sol.ratio))
+                            sde=sol.sde, sdn=sol.sdn, sdu=sol.sdu, ratio=sol.ratio,
+                            # persist the current epoch's sky data so replay can
+                            # reconstruct the skyplot (status.sol.sats_json)
+                            sats_json=json.dumps(self._latest_sats)))
                     except Exception:
                         _logger.exception("rtkrcv epoch store failed")
                 if self.publisher is not None:
@@ -397,10 +400,10 @@ class App:
         run_dir = (self.cfg.data_root / "rtkrcv").resolve()
         cur_path = None
         fh = None
-        epoch_tow: float | None = None
-        epoch_sats: list[dict] = []
-        epoch_stats: list[SatStat] = []
-        seen: set[str] = set()
+        acc = StatEpochAccumulator()
+        # slip window is queried on the wall clock (count(now)), so feed wall
+        # time, not the $SAT GPST tow
+        on_slip = lambda sat, slipc: self._slips.feed(time.time(), sat, slipc)
         try:
             while True:
                 try:
@@ -411,7 +414,7 @@ class App:
                             fh.close()
                         fh = open(newest, "r")
                         cur_path = newest
-                        epoch_tow, epoch_sats, epoch_stats, seen = None, [], [], set()
+                        acc.reset()
                     if fh is not None:
                         while True:
                             pos = fh.tell()
@@ -421,27 +424,9 @@ class App:
                             if not line.endswith("\n"):
                                 fh.seek(pos)   # partial line mid-write; retry next poll
                                 break
-                            st = parse_sat_line(line)
-                            if st is None:
-                                continue
-                            if epoch_tow is not None and st.tow != epoch_tow:
-                                if epoch_sats:
-                                    self._latest_sats = epoch_sats
-                                    self._latest_satstats = epoch_stats
-                                epoch_sats, epoch_stats, seen = [], [], set()
-                            epoch_tow = st.tow
-                            if st.sat in seen:      # one point per sat (skip 2nd freq)
-                                continue
-                            seen.add(st.sat)
-                            epoch_sats.append({"sat": st.sat, "az": st.az, "el": st.el,
-                                               "snr": st.snr, "used": st.valid})
-                            epoch_stats.append(st)
-                            # slip window is queried on the wall clock (count(now)),
-                            # so feed wall time, not the $SAT GPST tow
-                            self._slips.feed(time.time(), st.sat, st.slipc)
-                        if epoch_sats:
-                            self._latest_sats = epoch_sats
-                            self._latest_satstats = epoch_stats
+                            acc.feed(line, on_slip=on_slip)
+                        self._latest_sats = acc.sats
+                        self._latest_satstats = acc.satstats
                 except Exception:
                     _logger.exception("stat reader iteration failed")
                 await asyncio.sleep(0.5)

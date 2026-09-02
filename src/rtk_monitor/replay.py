@@ -126,15 +126,17 @@ async def replay_messages(epochs: EpochStore, events: EventStore, t0: float, t1:
         sol_row = last["rtkrcv"]
         sol_dict = None
         if sol_row is not None:
-            # Exact 11-key contract shared with the realtime status.sol dict
-            # (main.py's _diagnosis_tick) -- not the full Epoch asdict, which
-            # would leak src/heading/speed/sats_json that realtime never
-            # includes for the sol slot.
+            # Exact 12-key contract shared with the realtime status.sol dict
+            # (main.py's _diagnosis_tick): the 11 solution fields plus
+            # sats_json (the persisted per-satellite sky data), so the replay
+            # skyplot renders the same as live. Not the full Epoch asdict,
+            # which would also leak src/heading/speed.
             sol_dict = {
                 "t": sol_row.t, "q": sol_row.q, "sats": sol_row.sats,
                 "age": sol_row.age, "ratio": sol_row.ratio,
                 "lat": sol_row.lat, "lon": sol_row.lon, "alt": sol_row.alt,
                 "sdn": sol_row.sdn, "sde": sol_row.sde, "sdu": sol_row.sdu,
+                "sats_json": sol_row.sats_json,
             }
         can_dict = dataclasses.asdict(last["can"]) if last["can"] is not None else None
         gpchc_dict = dataclasses.asdict(last["gpchc"]) if last["gpchc"] is not None else None
