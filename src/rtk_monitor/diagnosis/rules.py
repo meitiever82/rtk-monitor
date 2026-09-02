@@ -1,6 +1,7 @@
 """Pure diagnosis rule chain (spec §4.2): first matching rule wins."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from rtk_monitor.config import DiagnosisCfg
@@ -21,6 +22,7 @@ class DiagnosisInput:
     divergence_m: float | None = None      # |610 fused - rtkrcv| horizontal
     divergence_since: float | None = None  # host time divergence first exceeded
     solver_enabled: bool = True
+    control_points: list[tuple[float, float]] = field(default_factory=list)  # (lat, lon)
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,15 @@ class Verdict:
     level: str    # ok | info | warning | serious | critical
     code: str
     message: str
+
+
+def _horiz_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle horizontal distance in metres (haversine)."""
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin(math.radians(lat2 - lat1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
 def diagnose(inp: DiagnosisInput, cfg: DiagnosisCfg) -> Verdict:
@@ -46,6 +57,20 @@ def diagnose(inp: DiagnosisInput, cfg: DiagnosisCfg) -> Verdict:
     if inp.base_offset_m is not None and inp.base_offset_m > cfg.base_shift_m:
         return Verdict("critical", "base_shift",
                        f"⚠ 基站坐标变动 {inp.base_offset_m:.2f}m——全矿定位将整体平移")
+
+    # Rule 2b: absolute-baseline verification against a surveyed control point.
+    # When the vehicle is at (within abs_ref_radius_m of) a known control point
+    # but the solution deviates past abs_ref_max_m, the whole-mine frame has
+    # shifted -- the last-resort check that catches a base-station move the other
+    # rules stay green through (spec §4.2). Only the nearest control point within
+    # range is judged (the vehicle is "at" one point at a time).
+    if inp.sol is not None and inp.sol.lat is not None and inp.control_points:
+        devs = [(_horiz_m(inp.sol.lat, inp.sol.lon, cp[0], cp[1]), cp)
+                for cp in inp.control_points]
+        near = min(devs, key=lambda d: d[0])
+        if near[0] <= cfg.abs_ref_radius_m and near[0] > cfg.abs_ref_max_m:
+            return Verdict("critical", "abs_ref_shift",
+                           f"⚠ 绝对基准偏差 {near[0]:.2f}m@控制点——全矿整体平移嫌疑")
 
     # Rule 3: too few satellites
     if inp.sol is not None and inp.sol.ns < cfg.min_sats:

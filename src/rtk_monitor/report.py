@@ -13,7 +13,17 @@ def _fix_ratio(rows, fixed_q: int) -> float | None:
     return sum(1 for e in rows if e.q == fixed_q) / len(rows)
 
 
-def compute_report(epochs: EpochStore, events: EventStore, t0: float, t1: float) -> dict:
+def _horiz_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle horizontal distance in metres (haversine)."""
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin(math.radians(lat2 - lat1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+def compute_report(epochs: EpochStore, events: EventStore, t0: float, t1: float,
+                   control_points=(), abs_ref_radius_m: float = 3.0) -> dict:
     rtk = epochs.query("rtkrcv", t0, t1)
     can = epochs.query("can", t0, t1)
     gpchc = epochs.query("gpchc", t0, t1)
@@ -43,7 +53,23 @@ def compute_report(epochs: EpochStore, events: EventStore, t0: float, t1: float)
     if hist:
         x0, y0, z0 = hist[0][1:]
         base_max = max(math.dist((x0, y0, z0), h[1:]) for h in hist)
+
+    # Absolute-baseline verification (§6 必含项): for each rtkrcv epoch that was
+    # at (within abs_ref_radius_m of) a surveyed control point, the deviation
+    # from that point's known coordinate — the last-resort curve that exposes a
+    # whole-mine shift the other stats stay green through.
+    abs_ref = []
+    for e in rtk:
+        if e.lat is None:
+            continue
+        for cp in control_points:
+            dev = _horiz_m(e.lat, e.lon, cp.lat, cp.lon)
+            if dev <= abs_ref_radius_m:
+                abs_ref.append({"t": e.t, "cp": cp.name, "dev_m": dev})
+    abs_ref_max = max((r["dev_m"] for r in abs_ref), default=None)
+
     return {"fix_ratio": _fix_ratio(main_rows, fixed_q), "hourly": hourly,
             "events": sorted(evs, key=lambda e: e["t"]),
             "base_max_offset_m": base_max,
+            "abs_ref": abs_ref, "abs_ref_max_m": abs_ref_max,
             "epoch_counts": {"rtkrcv": len(rtk), "can": len(can), "gpchc": len(gpchc)}}

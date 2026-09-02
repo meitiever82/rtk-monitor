@@ -1,7 +1,32 @@
 """Tests for report statistics."""
+from rtk_monitor.config import ControlPoint
 from rtk_monitor.report import compute_report
 from rtk_monitor.storage.epochs import Epoch, EpochStore
 from rtk_monitor.storage.events import EventStore
+
+_DEG_PER_M = 1.0 / 111000.0
+
+
+def test_report_abs_ref_control_point_deviation(tmp_path):
+    """Absolute-baseline verification (§6 必含项): epochs near a surveyed control
+    point contribute a deviation series; epochs far from all points are ignored."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    base = 1000.0
+    ep.add(Epoch(t=base + 1, src="rtkrcv", q=1, lat=44.5 + 0.5 * _DEG_PER_M, lon=90.28))
+    ep.add(Epoch(t=base + 2, src="rtkrcv", q=1, lat=44.5, lon=90.28))          # ~0 m
+    ep.add(Epoch(t=base + 3, src="rtkrcv", q=1, lat=44.6, lon=90.28))          # ~11 km, ignored
+    cps = [ControlPoint("CP1", 44.5, 90.28, 0.0)]
+    r = compute_report(ep, ev, base, base + 10, control_points=cps, abs_ref_radius_m=3.0)
+    assert len(r["abs_ref"]) == 2
+    assert all(x["cp"] == "CP1" for x in r["abs_ref"])
+    assert abs(r["abs_ref_max_m"] - 0.5) < 0.05
+
+
+def test_report_abs_ref_empty_without_control_points(tmp_path):
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    ep.add(Epoch(t=1.0, src="rtkrcv", q=1, lat=44.5, lon=90.28))
+    r = compute_report(ep, ev, 0.0, 10.0)
+    assert r["abs_ref"] == [] and r["abs_ref_max_m"] is None
 
 
 def test_report_stats(tmp_path):

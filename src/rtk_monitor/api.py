@@ -90,11 +90,15 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
 
     @api.get("/api/report")
     async def report_json(t0: float, t1: float):
-        return compute_report(app.epochs, app.events, t0, t1)
+        return compute_report(app.epochs, app.events, t0, t1,
+                               control_points=app.cfg.control_points,
+                               abs_ref_radius_m=app.cfg.diagnosis.abs_ref_radius_m)
 
     @api.get("/report", response_class=HTMLResponse)
     async def report_html(t0: float, t1: float):
-        r = compute_report(app.epochs, app.events, t0, t1)
+        r = compute_report(app.epochs, app.events, t0, t1,
+                           control_points=app.cfg.control_points,
+                           abs_ref_radius_m=app.cfg.diagnosis.abs_ref_radius_m)
 
         def pct(v):
             return "-" if v is None else f"{v:.1%}"
@@ -107,9 +111,20 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
                       f"<td>{html.escape(e['message'] or '')}</td></tr>"
                       for e in r["events"])
         fr = "-" if r["fix_ratio"] is None else f"{r['fix_ratio']:.1%}"
+        ar_max, ar_thr = r["abs_ref_max_m"], app.cfg.diagnosis.abs_ref_max_m
+        ar_status = ("未布设控制点或无经过" if ar_max is None
+                     else (f"⚠ 超阈值（&gt;{ar_thr} m）——全矿整体平移嫌疑"
+                           if ar_max > ar_thr else "正常"))
+        ar_rows = "".join(
+            f"<tr><td>{html.escape(x['cp'])}</td><td>{x['dev_m']:.3f}</td></tr>"
+            for x in r["abs_ref"])
+        ar_table = (f"<table border=1 cellpadding=4><tr><th>控制点</th><th>偏差(m)</th></tr>{ar_rows}</table>"
+                    if ar_rows else "")
+        ar_max_s = "-" if ar_max is None else f"{ar_max:.3f} m"
         return f"""<html><meta charset="utf-8"><body style="font-family:sans-serif;max-width:800px;margin:2em auto">
 <h1>RTK 定位报告</h1><p>固定解可用率：<b>{fr}</b>　基站最大偏移：{r['base_max_offset_m'] or '-'} m</p>
 <h2>分小时统计</h2><table border=1 cellpadding=4><tr><th>小时</th><th>历元数</th><th>固定率</th></tr>{rows}</table>
+<h2>绝对基准校验（控制点比对）</h2><p>最大偏差：<b>{ar_max_s}</b>　状态：{ar_status}</p>{ar_table}
 <h2>事件（{len(r['events'])}）</h2><table border=1 cellpadding=4><tr><th>类型</th><th>级别</th><th>时长(s)</th><th>结论</th></tr>{evs}</table>
 </body></html>"""
 

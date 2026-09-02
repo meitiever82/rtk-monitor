@@ -1,5 +1,6 @@
 # tests/test_api.py — TestClient 覆盖 REST 与 WS 回放（live 推送在 Task 10 端到端验证）
 import dataclasses
+import types
 
 from fastapi.testclient import TestClient
 
@@ -20,6 +21,10 @@ class _FakeApp:
         self.base_monitor = BaseStationMonitor(self.epochs, warmup_s=1.0)
         self.last_status = {"type": "status", "t": 123.0}
         self.tile_store = None
+        from rtk_monitor.config import DiagnosisCfg
+        self.cfg = types.SimpleNamespace(
+            diagnosis=DiagnosisCfg(), control_points=(),
+            web=types.SimpleNamespace(static_dir=""))
 
 
 def _client(tmp_path):

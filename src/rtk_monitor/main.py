@@ -485,7 +485,8 @@ class App:
             sol=sol, sol_t=self._sol_t,
             sats=self._latest_satstats, slip_count_30s=self._slips.count(now),
             divergence_m=div_m, divergence_since=self._div_since,
-            solver_enabled=(self.cfg.rtkrcv.binary != ""))
+            solver_enabled=(self.cfg.rtkrcv.binary != ""),
+            control_points=[(cp.lat, cp.lon) for cp in self.cfg.control_points])
         v = diagnose(inp, self.cfg.diagnosis)
         lat = sol.lat if sol else (can_e.lat if can_e else None)
         lon = sol.lon if sol else (can_e.lon if can_e else None)

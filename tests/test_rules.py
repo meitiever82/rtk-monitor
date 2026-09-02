@@ -53,6 +53,35 @@ def test_rule4_multipath():
     assert v.code == "multipath" and "C08" in v.message and "G17" in v.message
 
 
+# --- absolute-baseline verification (control points, §4.2 / §6) -------------
+_DEG_PER_M = 1.0 / 111000.0   # ≈ latitude degrees per metre
+
+
+def test_abs_ref_shift_when_near_control_point_and_deviated():
+    # control point ~0.5 m north of the solution: within the proximity radius
+    # (default 3 m) but past the deviation threshold (default 0.2 m) -> alarm
+    cp = (44.5 + 0.5 * _DEG_PER_M, 90.28)
+    v = diagnose(_inp(control_points=[cp]), CFG)
+    assert v.code == "abs_ref_shift" and v.level == "critical"
+
+
+def test_no_abs_ref_alarm_when_on_control_point():
+    cp = (44.5, 90.28)                      # exactly at the solution -> dev ~0
+    v = diagnose(_inp(control_points=[cp]), CFG)
+    assert v.code == "rtk_fixed"
+
+
+def test_no_abs_ref_alarm_when_far_from_all_control_points():
+    cp = (44.6, 90.28)                      # ~11 km away -> not "at" it, skip
+    v = diagnose(_inp(control_points=[cp]), CFG)
+    assert v.code == "rtk_fixed"
+
+
+def test_no_abs_ref_alarm_without_control_points():
+    v = diagnose(_inp(control_points=[]), CFG)
+    assert v.code == "rtk_fixed"
+
+
 def test_rule5_float_low_ratio():
     v = diagnose(_inp(sol=_sol(q=2, ratio=1.8)), CFG)
     assert v.code == "ambiguity" and "1.8" in v.message

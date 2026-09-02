@@ -36,6 +36,19 @@ class DiagnosisCfg:
     divergence_hold_s: float = 5.0
     close_hysteresis_s: float = 10.0
     sol_stale_s: float = 5.0
+    abs_ref_max_m: float = 0.2       # control-point deviation alarm threshold
+    abs_ref_radius_m: float = 3.0    # how close to a control point counts as "at" it
+
+
+@dataclass(frozen=True)
+class ControlPoint:
+    """A surveyed reference point with known WGS-84 coordinates (§4.2 absolute
+    baseline verification). The vehicle passing/parking here lets the app compare
+    its own solution against ground truth to catch a whole-mine coordinate shift."""
+    name: str
+    lat: float
+    lon: float
+    alt: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -70,6 +83,7 @@ class Config:
     publish: PublishCfg
     web: WebCfg
     db_retention_days: int
+    control_points: tuple[ControlPoint, ...] = ()
 
 
 def _stream(d: dict) -> StreamCfg:
@@ -106,4 +120,9 @@ def load_config(path: str | Path) -> Config:
                    host=str(w.get("host", "0.0.0.0")),
                    static_dir=str(w.get("static_dir", ""))),
         db_retention_days=int(raw.get("db_retention_days", 30)),
+        control_points=tuple(
+            ControlPoint(name=str(cp.get("name", f"CP{i}")),
+                         lat=float(cp["lat"]), lon=float(cp["lon"]),
+                         alt=float(cp.get("alt", 0.0)))
+            for i, cp in enumerate(raw.get("control_points") or [])),
     )
