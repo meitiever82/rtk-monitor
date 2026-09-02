@@ -113,3 +113,33 @@ async def test_no_orphaned_grandchildren_on_cancel(tmp_path):
         grandchild_pid = int(pidfile.read_text().strip())
         with pytest.raises(ProcessLookupError):
             os.kill(grandchild_pid, 0)  # signal 0 checks if process exists
+
+
+async def test_conf_loadable_with_relative_run_dir(tmp_path, monkeypatch):
+    """Regression: a relative data_root made the manager pass a relative -o conf
+    path while spawning rtkrcv with cwd=run_dir, so rtkrcv resolved the conf
+    against run_dir (double-nesting) and silently ran with no config."""
+    monkeypatch.chdir(tmp_path)
+    marker = tmp_path / "conf_check"          # absolute, immune to cwd games
+    # fake rtkrcv: locate the token after -o and report whether that file is
+    # findable from the process's own cwd (which the manager sets to run_dir).
+    body = (
+        'conf=""\n'
+        'while [ $# -gt 0 ]; do\n'
+        '  if [ "$1" = "-o" ]; then shift; conf="$1"; fi\n'
+        '  shift\n'
+        'done\n'
+        f'if [ -f "$conf" ]; then echo found > "{marker}"; '
+        f'else echo "missing:$conf" > "{marker}"; fi\n'
+        'sleep 5\n'
+    )
+    binary = _fake_binary(tmp_path, body)
+    m = RtkrcvManager(binary, "rundir", 15010, 15011, 15020, restart_delay=9)
+    task = asyncio.create_task(m.run())
+    await asyncio.sleep(0.4)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert marker.read_text().strip() == "found"

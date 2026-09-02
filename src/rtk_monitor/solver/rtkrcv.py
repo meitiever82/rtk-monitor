@@ -59,7 +59,11 @@ class RtkrcvManager:
                  restart_delay: float = 5.0,
                  on_event: Callable[[str, str, str], None] | None = None) -> None:
         self._binary = binary
-        self._run_dir = Path(run_dir)
+        # Resolve to absolute: rtkrcv is spawned with cwd=run_dir, so a
+        # relative conf path (from a relative data_root) would be resolved
+        # against run_dir a second time — double-nested, not found, and the
+        # solver silently runs with no config. Absolute is cwd-independent.
+        self._run_dir = Path(run_dir).resolve()
         self._corr_port = corr_port
         self._obs_port = obs_port
         self._sol_port = sol_port
