@@ -89,9 +89,12 @@ class RtkrcvManager:
             started = time.monotonic()
             try:
                 # extra_args precede the fixed flags: lets tests spawn
-                # "python fake_rtkrcv.py ..." (Task 13); empty for the real binary
+                # "python fake_rtkrcv.py ..." (Task 13); empty for the real binary.
+                # -r 2 writes a rtkrcv_<time>.stat file (per-satellite $SAT lines
+                # with az/el/snr) into cwd=run_dir, which the app tails to feed
+                # the skyplot.
                 proc = await asyncio.create_subprocess_exec(
-                    self._binary, *self._extra, "-s", "-nc", "-o", str(conf),
+                    self._binary, *self._extra, "-s", "-nc", "-r", "2", "-o", str(conf),
                     cwd=self._run_dir, env=env,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,

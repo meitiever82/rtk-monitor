@@ -6,6 +6,7 @@ virtual bus (tests / replay without hardware).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import socket
@@ -30,7 +31,7 @@ from rtk_monitor.parsers.cgi610_can import Cgi610Assembler
 from rtk_monitor.parsers.gpchc import LineFramer, parse_gpchc
 from rtk_monitor.parsers.rtcm import RtcmFramer, parse_1005
 from rtk_monitor.parsers.rtksol import parse_llh_solution
-from rtk_monitor.parsers.rtkstat import SlipWindow
+from rtk_monitor.parsers.rtkstat import SlipWindow, parse_sat_line
 from rtk_monitor.publisher import UdpPublisher
 from rtk_monitor.solver.rtkrcv import RtkrcvManager
 from rtk_monitor.storage.canlog import CandumpWriter
@@ -112,6 +113,10 @@ class App:
         self._sol_t: float | None = None
         self._div_since: float | None = None
         self._slips = SlipWindow()
+        # Latest epoch's per-satellite sky data ({sat,az,el,snr,used}), tailed
+        # from rtkrcv's -r 2 solution-status (.stat) file; fed to the skyplot
+        # via status.sol.sats_json.
+        self._latest_sats: list[dict] = []
         self._last_epoch_write: dict[str, int] = {}
         self._last_pos_pub: float = 0.0
 
@@ -363,6 +368,7 @@ class App:
         supervised.append(("diagnosis_loop", self._diagnosis_loop))
         if self._rtkrcv_manager is not None:
             supervised.append(("rtkrcv", self._rtkrcv_manager.run))
+            supervised.append(("rtkstat", self._stat_reader))
         if self._rtkrcv_sol_collector is not None:
             supervised.append((self._rtkrcv_sol_collector.name, self._rtkrcv_sol_collector.run))
         self._web_server = uvicorn.Server(
@@ -378,6 +384,60 @@ class App:
             for t in tasks:
                 t.cancel()
             raise
+
+    async def _stat_reader(self) -> None:
+        """Tail rtkrcv's -r 2 solution-status file and keep the latest epoch's
+        per-satellite sky data in self._latest_sats for the skyplot. rtkrcv
+        names the file rtkrcv_<time>.stat in run_dir; pick the actively-written
+        one by mtime (the name's timestamp is unreliable), and re-select if
+        rtkrcv restarts and opens a fresh file."""
+        run_dir = (self.cfg.data_root / "rtkrcv").resolve()
+        cur_path = None
+        fh = None
+        epoch_tow: float | None = None
+        epoch_sats: list[dict] = []
+        seen: set[str] = set()
+        try:
+            while True:
+                try:
+                    stats = list(run_dir.glob("rtkrcv_*.stat"))
+                    newest = max(stats, key=lambda p: p.stat().st_mtime) if stats else None
+                    if newest is not None and newest != cur_path:
+                        if fh is not None:
+                            fh.close()
+                        fh = open(newest, "r")
+                        cur_path = newest
+                        epoch_tow, epoch_sats, seen = None, [], set()
+                    if fh is not None:
+                        while True:
+                            pos = fh.tell()
+                            line = fh.readline()
+                            if not line:
+                                break
+                            if not line.endswith("\n"):
+                                fh.seek(pos)   # partial line mid-write; retry next poll
+                                break
+                            st = parse_sat_line(line)
+                            if st is None:
+                                continue
+                            if epoch_tow is not None and st.tow != epoch_tow:
+                                if epoch_sats:
+                                    self._latest_sats = epoch_sats
+                                epoch_sats, seen = [], set()
+                            epoch_tow = st.tow
+                            if st.sat in seen:      # one point per sat (skip 2nd freq)
+                                continue
+                            seen.add(st.sat)
+                            epoch_sats.append({"sat": st.sat, "az": st.az, "el": st.el,
+                                               "snr": st.snr, "used": st.valid})
+                        if epoch_sats:
+                            self._latest_sats = epoch_sats
+                except Exception:
+                    _logger.exception("stat reader iteration failed")
+                await asyncio.sleep(0.5)
+        finally:
+            if fh is not None:
+                fh.close()
 
     async def _diagnosis_loop(self) -> None:
         while True:
@@ -454,7 +514,10 @@ class App:
                     "alt": sol.alt,
                     "sdn": sol.sdn,
                     "sde": sol.sde,
-                    "sdu": sol.sdu
+                    "sdu": sol.sdu,
+                    # per-satellite sky data for the skyplot (empty until the
+                    # rtkrcv .stat tail has an epoch)
+                    "sats_json": json.dumps(self._latest_sats)
                 }
             can_dict = asdict(can_e) if can_e is not None else None
             gpchc_e = self.epochs.latest("gpchc")
