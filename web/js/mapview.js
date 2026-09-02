@@ -40,10 +40,21 @@ export class MapView {
     // mine-only tileset, any single hardcoded tile (e.g. z12/3000/1500) can
     // legitimately be absent while the tile store itself is populated, which
     // would false-negative a fixed-tile probe into the grid fallback.
+    // Basemap selection: prefer the offline MBTiles store when configured.
+    // Otherwise fall back to Esri World Imagery online (WGS-84 / EPSG:3857 —
+    // aligns with the RTK track, unlike GCJ-02/BD-09 sources), with the local
+    // coordinate grid layered underneath so a no-internet vehicle still gets
+    // a usable backdrop instead of blank tiles.
+    const useOnlineFallback = () => {
+      new GridFallback().addTo(this.map);
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 19, attribution: "Esri World Imagery" }).addTo(this.map);
+    };
     fetch("/api/tiles_info").then((r) => r.json()).then((info) => {
       if (info && info.available) L.tileLayer("/tiles/{z}/{x}/{y}.png", { maxZoom: 22 }).addTo(this.map);
-      else new GridFallback().addTo(this.map);
-    }).catch(() => new GridFallback().addTo(this.map));
+      else useOnlineFallback();
+    }).catch(useOnlineFallback);
 
     this.groups = {
       can: L.layerGroup().addTo(this.map),
