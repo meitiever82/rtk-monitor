@@ -366,8 +366,8 @@ class App:
         if self._rtkrcv_sol_collector is not None:
             supervised.append((self._rtkrcv_sol_collector.name, self._rtkrcv_sol_collector.run))
         self._web_server = uvicorn.Server(
-            uvicorn.Config(create_api(self), host="0.0.0.0", port=self.cfg.web.port,
-                           log_level="warning"))
+            uvicorn.Config(create_api(self), host=self.cfg.web.host, port=self.cfg.web.port,
+                           log_level="warning", timeout_graceful_shutdown=5))
         supervised.append(("web", self._web_server.serve))
         tasks = [asyncio.create_task(self._supervise(name, factory))
                  for name, factory in supervised]
@@ -434,7 +434,7 @@ class App:
         lon = sol.lon if sol else (can_e.lon if can_e else None)
         metrics = {
             "divergence_m": div_m or 0.0,
-            "sats": float(sol.ns) if sol else 0.0,
+            "sats_min": float(sol.ns) if sol else 0.0,
             "corr_gap_s": now - self._corr_last_t if self._corr_last_t else 0.0
         }
         self.event_machine.update(now, v, lat, lon, metrics=metrics)
@@ -529,6 +529,14 @@ class App:
                 cutoff = time.time() - self.cfg.db_retention_days * 86400.0
                 self.epochs.prune(cutoff)
                 self.events.prune(cutoff)
+                try:
+                    self.epochs.checkpoint()
+                except Exception:
+                    _logger.exception("epochs checkpoint failed")
+                try:
+                    self.events.checkpoint()
+                except Exception:
+                    _logger.exception("events checkpoint failed")
             except Exception:
                 # A transient filesystem error must not kill the hourly loop.
                 _logger.exception("cleanup failed")
@@ -556,6 +564,8 @@ def build_app(cfg: Config) -> App:
 
 
 def main() -> None:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = load_config(sys.argv[1] if len(sys.argv) > 1 else "config.yaml")
     app = build_app(cfg)
     try:

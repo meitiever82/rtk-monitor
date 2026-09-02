@@ -35,5 +35,7 @@ publish:          # UDP JSON Lines output (GLIM phase-2 interface)
 web:              # FastAPI/WebSocket UI service
   port: 8080
   tiles_path: ""  # MBTiles file for offline imagery; empty = grid fallback
+  host: 0.0.0.0   # bind address
+  static_dir: ""  # static web directory; empty = repository relative web/
 
 db_retention_days: 30   # prune epochs/base_station/closed events older than this

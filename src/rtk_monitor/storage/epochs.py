@@ -124,5 +124,9 @@ class EpochStore:
         self._db.commit()
         return n
 
+    def checkpoint(self) -> None:
+        """Compact the WAL file back into the db (long-running ARM disk hygiene)."""
+        self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def close(self) -> None:
         self._db.close()

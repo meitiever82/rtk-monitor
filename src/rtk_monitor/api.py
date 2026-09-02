@@ -15,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from rtk_monitor.replay import replay_messages
 from rtk_monitor.report import compute_report
 
-_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 _logger = logging.getLogger(__name__)
 
 # {"cmd":"replay","t1":9e15} used to reach replay_messages unvalidated and
@@ -24,6 +23,13 @@ _logger = logging.getLogger(__name__)
 # (independent of anything replay.py does) so a malicious/buggy client can
 # never request more than this much real time.
 _MAX_REPLAY_WINDOW_S = 48 * 3600.0
+
+
+def _web_dir(app) -> Path:
+    cfg = getattr(app, "cfg", None)
+    if cfg is not None and getattr(cfg.web, "static_dir", ""):
+        return Path(cfg.web.static_dir)
+    return Path(__file__).resolve().parents[2] / "web"
 
 
 def _validate_replay_cmd(cmd: dict) -> tuple[float, float, float] | None:
@@ -106,6 +112,14 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
 <h2>分小时统计</h2><table border=1 cellpadding=4><tr><th>小时</th><th>历元数</th><th>固定率</th></tr>{rows}</table>
 <h2>事件（{len(r['events'])}）</h2><table border=1 cellpadding=4><tr><th>类型</th><th>级别</th><th>时长(s)</th><th>结论</th></tr>{evs}</table>
 </body></html>"""
+
+    @api.get("/api/tiles_info")
+    async def tiles_info():
+        # The frontend probes this instead of a fixed /tiles/{z}/{x}/{y}.png
+        # coordinate: with a mine-only tileset, any single hardcoded tile can
+        # legitimately be missing even though the store itself is populated,
+        # so a fixed-tile probe would false-negative into the grid fallback.
+        return {"available": app.tile_store is not None}
 
     @api.get("/tiles/{z}/{x}/{y}.png")
     async def tile(z: int, x: int, y: int):
@@ -201,5 +215,5 @@ def create_api(app) -> FastAPI:            # app: rtk_monitor.main.App (duck-typ
                     t.cancel()
             app.broadcaster.unsubscribe(q)
 
-    api.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
+    api.mount("/", StaticFiles(directory=str(_web_dir(app)), html=True), name="web")
     return api

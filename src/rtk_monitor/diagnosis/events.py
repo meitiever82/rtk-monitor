@@ -33,7 +33,10 @@ class EventMachine:
                 # Event already open for this code; accumulate metrics and position
                 if metrics:
                     for k, v in metrics.items():
-                        if abs(v) > abs(self._peak.get(k, 0.0)):
+                        if k.endswith("_min"):
+                            if k not in self._peak or v < self._peak[k]:
+                                self._peak[k] = v
+                        elif abs(v) > abs(self._peak.get(k, 0.0)):
                             self._peak[k] = v
                 if lat is not None:
                     self._last_pos = (lat, lon)
@@ -51,7 +54,10 @@ class EventMachine:
             # Accumulate first update's metrics and position
             if metrics:
                 for k, v in metrics.items():
-                    if abs(v) > abs(self._peak.get(k, 0.0)):
+                    if k.endswith("_min"):
+                        if k not in self._peak or v < self._peak[k]:
+                            self._peak[k] = v
+                    elif abs(v) > abs(self._peak.get(k, 0.0)):
                         self._peak[k] = v
             if lat is not None:
                 self._last_pos = (lat, lon)
