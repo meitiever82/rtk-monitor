@@ -31,7 +31,7 @@ from rtk_monitor.parsers.cgi610_can import Cgi610Assembler
 from rtk_monitor.parsers.gpchc import LineFramer, parse_gpchc
 from rtk_monitor.parsers.rtcm import RtcmFramer, parse_1005
 from rtk_monitor.parsers.rtksol import parse_llh_solution
-from rtk_monitor.parsers.rtkstat import SlipWindow, parse_sat_line
+from rtk_monitor.parsers.rtkstat import SatStat, SlipWindow, parse_sat_line
 from rtk_monitor.publisher import UdpPublisher
 from rtk_monitor.solver.rtkrcv import RtkrcvManager
 from rtk_monitor.storage.canlog import CandumpWriter
@@ -113,10 +113,13 @@ class App:
         self._sol_t: float | None = None
         self._div_since: float | None = None
         self._slips = SlipWindow()
-        # Latest epoch's per-satellite sky data ({sat,az,el,snr,used}), tailed
-        # from rtkrcv's -r 2 solution-status (.stat) file; fed to the skyplot
-        # via status.sol.sats_json.
+        # Latest epoch's per-satellite data, tailed from rtkrcv's -r 2
+        # solution-status (.stat) file. _latest_sats are skyplot dicts
+        # ({sat,az,el,snr,used}) surfaced via status.sol.sats_json;
+        # _latest_satstats are the SatStat objects the diagnosis multipath
+        # rule consumes.
         self._latest_sats: list[dict] = []
+        self._latest_satstats: list[SatStat] = []
         self._last_epoch_write: dict[str, int] = {}
         self._last_pos_pub: float = 0.0
 
@@ -396,6 +399,7 @@ class App:
         fh = None
         epoch_tow: float | None = None
         epoch_sats: list[dict] = []
+        epoch_stats: list[SatStat] = []
         seen: set[str] = set()
         try:
             while True:
@@ -407,7 +411,7 @@ class App:
                             fh.close()
                         fh = open(newest, "r")
                         cur_path = newest
-                        epoch_tow, epoch_sats, seen = None, [], set()
+                        epoch_tow, epoch_sats, epoch_stats, seen = None, [], [], set()
                     if fh is not None:
                         while True:
                             pos = fh.tell()
@@ -423,15 +427,21 @@ class App:
                             if epoch_tow is not None and st.tow != epoch_tow:
                                 if epoch_sats:
                                     self._latest_sats = epoch_sats
-                                epoch_sats, seen = [], set()
+                                    self._latest_satstats = epoch_stats
+                                epoch_sats, epoch_stats, seen = [], [], set()
                             epoch_tow = st.tow
                             if st.sat in seen:      # one point per sat (skip 2nd freq)
                                 continue
                             seen.add(st.sat)
                             epoch_sats.append({"sat": st.sat, "az": st.az, "el": st.el,
                                                "snr": st.snr, "used": st.valid})
+                            epoch_stats.append(st)
+                            # slip window is queried on the wall clock (count(now)),
+                            # so feed wall time, not the $SAT GPST tow
+                            self._slips.feed(time.time(), st.sat, st.slipc)
                         if epoch_sats:
                             self._latest_sats = epoch_sats
+                            self._latest_satstats = epoch_stats
                 except Exception:
                     _logger.exception("stat reader iteration failed")
                 await asyncio.sleep(0.5)
@@ -486,7 +496,7 @@ class App:
                      (can_e.age if can_e else None),
             base_offset_m=self._base_offset,
             sol=sol, sol_t=self._sol_t,
-            sats=[], slip_count_30s=self._slips.count(now),
+            sats=self._latest_satstats, slip_count_30s=self._slips.count(now),
             divergence_m=div_m, divergence_since=self._div_since,
             solver_enabled=(self.cfg.rtkrcv.binary != ""))
         v = diagnose(inp, self.cfg.diagnosis)
