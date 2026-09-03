@@ -48,22 +48,22 @@ rtk-monitor 作为独立 Python 应用已交付并验证（四路接入、rtkrcv
 ## 2. 总体架构
 
 ```
-┌─ 生产者层（ROS2 节点，彼此平级，都发 gnss_msgs/RtkFix）──────┐
-│  gnss_CGI610      610 板卡组合解 / 卫导解（已有，增发 rtk_fix）│
-│  rtkrcv_node      RTKLIB 独立解算（新）                        │
-│  <未来算法>       PPP / 其他                                   │
+┌──── 生产者层（ROS2 节点，彼此平级，都发 gnss_msgs/RtkFix）─────────┐
+│     gnss_CGI610      610 板卡组合解 / 卫导解（已有，增发 rtk_fix） │
+│     rtkrcv_node      RTKLIB 独立解算（新）                      │
+│     <未来算法>        PPP / 其他                                │
 └───────────────────────────┬───────────────────────────────────┘
                             │ gnss_msgs/RtkFix
   ┌─────────────────────────┼──────────────────────┐
   │                         │                      │
   ↓                         ↓                      ↓
-┌─ gnss_core（纯 C++ 库，无 ROS / 无 GLIM 依赖，可单测）────────┐
-│  类型      RtkFixSample / EpochRecord / Verdict                │
-│  诊断      九条规则链 + 事件状态机 + 轨迹对比统计              │
-│  约束      RtkNoisePolicy / RtkFixBuffer / FrameAligner        │
-│            AntennaPriorFactor                                  │
-│  解析      RTCM 分帧与 1005 解析 / rtkrcv $SAT 与 llh 解析     │
-│  落盘      .pos 写出器                                         │
+┌──── gnss_core（纯 C++ 库，无 ROS / 无 GLIM 依赖，可单测）──────────┐
+│     类型      RtkFixSample / EpochRecord / Verdict             │
+│     诊断      九条规则链 + 事件状态机 + 轨迹对比统计                 │
+│     约束      RtkNoisePolicy / RtkFixBuffer / FrameAligner     │
+│              AntennaPriorFactor                               │
+│     解析      RTCM 分帧与 1005 解析 / rtkrcv $SAT 与 llh 解析    │
+│     落盘      .pos 写出器                                       │
 └───┬──────────────────┬────────────────────┬───────────────────┘
     │                  │                    │
     ↓                  ↓                    ↓
