@@ -29,6 +29,30 @@ def test_report_abs_ref_empty_without_control_points(tmp_path):
     assert r["abs_ref"] == [] and r["abs_ref_max_m"] is None
 
 
+def test_report_abs_ref_ignores_non_fixed_epochs(tmp_path):
+    """Float/single epochs near a control point are dm-level noise, not a frame
+    shift — they must not enter the abs_ref series."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    base = 1000.0
+    ep.add(Epoch(t=base + 1, src="rtkrcv", q=2, lat=44.5 + 0.5 * _DEG_PER_M, lon=90.28))  # float
+    ep.add(Epoch(t=base + 2, src="rtkrcv", q=1, lat=44.5 + 0.3 * _DEG_PER_M, lon=90.28))  # fixed
+    cps = [ControlPoint("CP1", 44.5, 90.28, 0.0)]
+    r = compute_report(ep, ev, base, base + 10, control_points=cps, abs_ref_radius_m=3.0)
+    assert len(r["abs_ref"]) == 1                       # only the fixed epoch
+    assert abs(r["abs_ref_max_m"] - 0.3) < 0.05
+
+
+def test_report_can_rtk_deviation_skips_far_apart_timestamps(tmp_path):
+    """A can epoch >tolerance from the rtkrcv epoch is not paired — otherwise a
+    moving vehicle's travel in the gap would masquerade as solver disagreement."""
+    ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")
+    base = 1000.0
+    ep.add(Epoch(t=base + 1.0, src="rtkrcv", q=1, lat=44.5, lon=90.28))
+    ep.add(Epoch(t=base + 1.9, src="can", q=4, lat=44.5 + 5.0 * _DEG_PER_M, lon=90.28))  # 0.9 s away
+    r = compute_report(ep, ev, base, base + 10)
+    assert r["can_rtk_dev"]["n"] == 0                   # no pair within tolerance
+
+
 def test_report_can_rtk_deviation(tmp_path):
     """§6: 610-fused vs independent-solution deviation, matched per second."""
     ep = EpochStore(tmp_path / "r.db"); ev = EventStore(tmp_path / "r.db")

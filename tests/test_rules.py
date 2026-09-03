@@ -82,6 +82,14 @@ def test_no_abs_ref_alarm_without_control_points():
     assert v.code == "rtk_fixed"
 
 
+def test_no_abs_ref_alarm_on_float_solution():
+    # a float solution is dm-level; being 0.5 m off a control point is normal
+    # and must NOT raise the critical whole-mine-shift alarm
+    cp = (44.5 + 0.5 * _DEG_PER_M, 90.28)
+    v = diagnose(_inp(sol=_sol(q=2, ratio=25.0), control_points=[cp]), CFG)
+    assert v.code != "abs_ref_shift"
+
+
 def test_rule5_float_low_ratio():
     v = diagnose(_inp(sol=_sol(q=2, ratio=1.8)), CFG)
     assert v.code == "ambiguity" and "1.8" in v.message

@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import socket
 import sys
 import time
@@ -25,6 +24,7 @@ from rtk_monitor.collectors.can import CanCollector
 from rtk_monitor.collectors.reserve import LocalReserver
 from rtk_monitor.collectors.tcp import TcpCollector
 from rtk_monitor.diagnosis.base_station import BaseStationMonitor
+from rtk_monitor.geo import horiz_dist_m
 from rtk_monitor.diagnosis.events import EventMachine
 from rtk_monitor.diagnosis.rules import DiagnosisInput, diagnose
 from rtk_monitor.parsers.cgi610_can import Cgi610Assembler
@@ -46,14 +46,6 @@ _SUPERVISE_RESTART_S = 5.0
 _DIAGNOSIS_INTERVAL_S = 1.0
 
 _logger = logging.getLogger(__name__)
-
-
-def _horiz_dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Equirectangular-projection horizontal distance (good enough at this scale)."""
-    r = 6378137.0
-    x = math.radians(lon2 - lon1) * r * math.cos(math.radians((lat1 + lat2) / 2))
-    y = math.radians(lat2 - lat1) * r
-    return math.hypot(x, y)
 
 
 def _pick_free_port() -> int:
@@ -120,6 +112,9 @@ class App:
         # rule consumes.
         self._latest_sats: list[dict] = []
         self._latest_satstats: list[SatStat] = []
+        # control points as (lat, lon) for the diagnosis abs-ref check; immutable
+        # config, so built once here rather than per 1 Hz tick
+        self._control_points_ll = [(cp.lat, cp.lon) for cp in cfg.control_points]
         self._last_epoch_write: dict[str, int] = {}
         self._last_pos_pub: float = 0.0
 
@@ -466,7 +461,7 @@ class App:
             can_e = None
         if (sol is not None and can_e is not None and can_e.lat is not None
                 and abs((self._sol_t or 0) - can_e.t) < 2.0):
-            div_m = _horiz_dist_m(sol.lat, sol.lon, can_e.lat, can_e.lon)
+            div_m = horiz_dist_m(sol.lat, sol.lon, can_e.lat, can_e.lon)
             sigma = max(1e-3, (sol.sdn ** 2 + sol.sde ** 2) ** 0.5)
             if div_m > self.cfg.diagnosis.divergence_sigma * sigma:
                 self._div_since = self._div_since or now
@@ -486,7 +481,7 @@ class App:
             sats=self._latest_satstats, slip_count_30s=self._slips.count(now),
             divergence_m=div_m, divergence_since=self._div_since,
             solver_enabled=(self.cfg.rtkrcv.binary != ""),
-            control_points=[(cp.lat, cp.lon) for cp in self.cfg.control_points])
+            control_points=self._control_points_ll)
         v = diagnose(inp, self.cfg.diagnosis)
         lat = sol.lat if sol else (can_e.lat if can_e else None)
         lon = sol.lon if sol else (can_e.lon if can_e else None)

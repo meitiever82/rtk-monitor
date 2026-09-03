@@ -1,10 +1,10 @@
 """Pure diagnosis rule chain (spec §4.2): first matching rule wins."""
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 from rtk_monitor.config import DiagnosisCfg
+from rtk_monitor.geo import horiz_dist_m
 from rtk_monitor.parsers.rtksol import RtkSolution
 from rtk_monitor.parsers.rtkstat import SatStat
 
@@ -32,15 +32,6 @@ class Verdict:
     message: str
 
 
-def _horiz_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle horizontal distance in metres (haversine)."""
-    r = 6371000.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    a = (math.sin(math.radians(lat2 - lat1) / 2) ** 2
-         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
-    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
-
-
 def diagnose(inp: DiagnosisInput, cfg: DiagnosisCfg) -> Verdict:
     if inp.sol is None and inp.corr_last_t is None:
         return Verdict("warning", "no_data", "无数据——检查采集链路与设备连接")
@@ -63,9 +54,12 @@ def diagnose(inp: DiagnosisInput, cfg: DiagnosisCfg) -> Verdict:
     # but the solution deviates past abs_ref_max_m, the whole-mine frame has
     # shifted -- the last-resort check that catches a base-station move the other
     # rules stay green through (spec §4.2). Only the nearest control point within
-    # range is judged (the vehicle is "at" one point at a time).
-    if inp.sol is not None and inp.sol.lat is not None and inp.control_points:
-        devs = [(_horiz_m(inp.sol.lat, inp.sol.lon, cp[0], cp[1]), cp)
+    # range is judged (the vehicle is "at" one point at a time). Gated to FIXED
+    # (q==1) solutions: the 0.2 m threshold is only meaningful against a cm-level
+    # fix -- a float/single solution is naturally dm-level and would false-alarm.
+    if (inp.sol is not None and inp.sol.q == 1 and inp.sol.lat is not None
+            and inp.control_points):
+        devs = [(horiz_dist_m(inp.sol.lat, inp.sol.lon, cp[0], cp[1]), cp)
                 for cp in inp.control_points]
         near = min(devs, key=lambda d: d[0])
         if near[0] <= cfg.abs_ref_radius_m and near[0] > cfg.abs_ref_max_m:
